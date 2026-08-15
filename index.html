@@ -62,15 +62,9 @@
       transition: all 0.2s ease;
     }
     .squad-btn.active {
-      background: #00ffcc;
+      background: #ffaa00;
       color: #050b14;
-    }
-
-    /* 右上：全画面表示ボタン */
-    .fullscreen-control {
-      position: absolute;
-      top: 12px; right: 12px; z-index: 1000;
-      pointer-events: auto;
+      border-color: #ffaa00;
     }
 
     /* 右下：作戦描画用コントロールUI */
@@ -141,10 +135,6 @@
     <button class="squad-btn" id="hqBtn" style="border-color: #ffaa00; color: #ffaa00;">ALL (HQ)</button>
     <button class="squad-btn" id="setNameBtn" style="border-color: #ffffff; color: #ffffff;">NAME</button>
   </div>
-</div>
-
-<div class="fullscreen-control">
-  <button id="fullScreenBtn" class="hud-btn">FULLSCREEN</button>
 </div>
 
 <div class="draw-controls" id="drawControls">
@@ -229,29 +219,7 @@
   let currentLng = null;
   let isMapInitialized = false;
 
-  // 3. 全画面モード制御
-  const fullScreenBtn = document.getElementById('fullScreenBtn');
-  fullScreenBtn.addEventListener('click', () => {
-    const docElm = document.documentElement;
-    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-      if (docElm.requestFullscreen) {
-        docElm.requestFullscreen().catch(() => {});
-      } else if (docElm.webkitRequestFullscreen) {
-        docElm.webkitRequestFullscreen();
-      }
-      window.scrollTo(0, 1);
-      fullScreenBtn.innerText = "EXIT FULL";
-    } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen().catch(() => {});
-      } else if (document.webkitExitFullscreen) {
-        document.webkitExitFullscreen();
-      }
-      fullScreenBtn.innerText = "FULLSCREEN";
-    }
-  });
-
-  // 4. 部隊トグル & HQモード切り替え制御
+  // 3. 部隊トグル & HQモード切り替え制御
   const squadToggleBtn = document.getElementById('squadToggleBtn');
   const addSquadBtn = document.getElementById('addSquadBtn');
   const hqBtn = document.getElementById('hqBtn');
@@ -309,13 +277,14 @@
     }
   });
 
-  // HQモード（指揮官モード）の独立切り替え
+  // HQモード（指揮官モード）のトグル切り替え
   hqBtn.addEventListener('click', () => {
-    isHQMode = true;
+    isHQMode = !isHQMode; // 押し直すと元の部隊モードにトグルバック
     updateSquadUI();
+    executeUAVScan();
   });
 
-  // 5. 地図連動 ＆ 部隊別リアルタイム描画処理
+  // 4. 地図連動 ＆ 部隊別リアルタイム描画処理
   const toggleDrawBtn = document.getElementById('toggleDrawBtn');
   const clearDrawBtn = document.getElementById('clearDrawBtn');
 
@@ -426,7 +395,7 @@
   mapContainer.addEventListener('mousemove', drawLine);
   mapContainer.addEventListener('mouseup', stopLine);
 
-  // 6. Firebaseからのリアルタイム作戦線データ同期
+  // 5. Firebaseからのリアルタイム作戦線データ同期
   let drawingsUnsubscribe = null;
 
   function syncDrawings() {
@@ -473,7 +442,7 @@
 
   syncDrawings();
 
-  // 7. UAVスキャン処理
+  // 6. UAVスキャン処理
   const SCAN_INTERVAL_SEC = 60;
   let countdown = SCAN_INTERVAL_SEC;
 
@@ -513,7 +482,7 @@
     document.getElementById("uavTimer").innerText = `NEXT SCAN: ${countdown}S`;
   }, 1000);
 
-  // 8. GPS位置取得
+  // 7. GPS位置取得
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -550,7 +519,7 @@
     alert("GPS非対応の端末です。");
   }
 
-  // 9. 味方位置同期
+  // 8. 味方位置同期
   const teamPlayersRef = ref(db, `ops/${operationId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
     const players = snapshot.val() || {};
