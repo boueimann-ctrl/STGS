@@ -46,6 +46,25 @@
       font-size: 11px; color: #00ffcc; margin-top: 4px;
     }
 
+    /* 部隊（スクワッド）選択UI & 名前変更 */
+    .squad-selector {
+      margin-top: 8px;
+      display: flex; gap: 4px; flex-wrap: wrap;
+    }
+    .squad-btn {
+      background: rgba(5, 11, 20, 0.8);
+      border: 1px solid #00ffcc;
+      color: #00ffcc;
+      font-size: 10px; font-weight: bold;
+      padding: 4px 6px;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    .squad-btn.active {
+      background: #00ffcc;
+      color: #050b14;
+    }
+
     /* 右上：全画面表示ボタン */
     .fullscreen-control {
       position: absolute;
@@ -76,25 +95,52 @@
       color: #050b14;
     }
 
-    /* マーカーデザイン（発光ドット） */
+    /* マーカーデザイン（望遠時に被らないように小ぶりに設計） */
     .player-marker-me {
-      width: 14px; height: 14px;
-      background-color: #00ffcc; border: 2px solid #ffffff;
-      border-radius: 50%; box-shadow: 0 0 12px #00ffcc;
+      width: 10px; height: 10px;
+      background-color: #00ffcc; border: 1.5px solid #ffffff;
+      border-radius: 50%; box-shadow: 0 0 8px #00ffcc;
+      transition: all 0.2s ease;
     }
     .player-marker-team {
-      width: 12px; height: 12px;
-      background-color: #0099ff; border: 2px solid #ffffff;
-      border-radius: 50%; box-shadow: 0 0 8px #0099ff;
+      width: 8px; height: 8px;
+      background-color: #0099ff; border: 1.5px solid #ffffff;
+      border-radius: 50%; box-shadow: 0 0 6px #0099ff;
+      transition: all 0.2s ease;
+    }
+
+    /* Leaflet Tooltip & Popup カスタマイズ (軍用UI風) */
+    .leaflet-tooltip-custom {
+      background: rgba(5, 11, 20, 0.9) !important;
+      border: 1px solid #00ffcc !important;
+      color: #00ffcc !important;
+      font-family: 'Courier New', Courier, monospace !important;
+      font-size: 11px !important;
+      font-weight: bold !important;
+      border-radius: 3px !important;
+      padding: 3px 6px !important;
+      box-shadow: 0 0 8px rgba(0, 255, 204, 0.4) !important;
+    }
+    .leaflet-tooltip-custom::before {
+      display: none !important;
     }
   </style>
 </head>
 <body>
 
 <div class="hud-overlay">
-  <div class="hud-title">UAV RECON // SQUAD-ALPHA</div>
+  <div class="hud-title" id="hudTitle">UAV RECON // SQUAD-ALPHA</div>
   <div class="hud-timer" id="uavTimer">NEXT SCAN: 60S</div>
   <div class="hud-status" id="statusText">ACQUIRING GPS...</div>
+  
+  <!-- 部隊切り替え & 名前設定ボタン -->
+  <div class="squad-selector">
+    <button class="squad-btn active" data-squad="alpha">ALPHA</button>
+    <button class="squad-btn" data-squad="bravo">BRAVO</button>
+    <button class="squad-btn" data-squad="charlie">CHARLIE</button>
+    <button class="squad-btn" data-squad="all" style="border-color: #ffaa00; color: #ffaa00;">ALL (HQ)</button>
+    <button class="squad-btn" id="setNameBtn" style="border-color: #ffffff; color: #ffffff;">NAME</button>
+  </div>
 </div>
 
 <div class="fullscreen-control">
@@ -103,7 +149,7 @@
 
 <div class="draw-controls">
   <button id="toggleDrawBtn" class="hud-btn">DRAW: OFF</button>
-  <button id="clearDrawBtn" class="hud-btn">CLEAR MY LINES</button>
+  <button id="clearDrawBtn" class="hud-btn">CLEAR SQUAD LINES</button>
 </div>
 
 <div id="map"></div>
@@ -118,7 +164,6 @@
     getDatabase, ref, set, push, get, onValue, remove, onDisconnect 
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-  // 1. Firebase 設定
   const firebaseConfig = {
     apiKey: "AIzaSyBXskTRVUm4CL9rPQj110sw59M20OyJi28",
     authDomain: "spac-gps.firebaseapp.com",
@@ -133,8 +178,33 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  const userId = "OPERATOR_" + Math.floor(100 + Math.random() * 900);
-  const teamId = "alpha_squad";
+  // 1. ユーザー名設定（ローカルストレージ保持）
+  let savedName = localStorage.getItem("bft_callsign");
+  if (!savedName) {
+    savedName = "OPERATOR_" + Math.floor(100 + Math.random() * 900);
+    localStorage.setItem("bft_callsign", savedName);
+  }
+  let userId = savedName;
+
+  const setNameBtn = document.getElementById('setNameBtn');
+  setNameBtn.addEventListener('click', () => {
+    const inputName = prompt("コールサイン（名前）を入力してください:", userId);
+    if (inputName && inputName.trim() !== "") {
+      userId = inputName.trim();
+      localStorage.setItem("bft_callsign", userId);
+      alert(`コールサインを [ ${userId} ] に変更しました。`);
+      executeUAVScan();
+    }
+  });
+
+  const operationId = "operation_alpha"; 
+  let currentSquad = "alpha";
+
+  const SQUAD_COLORS = {
+    alpha: "#ff0055",
+    bravo: "#00e5ff",
+    charlie: "#76ff03"
+  };
 
   // 2. 地図の初期化
   const map = L.map('map', {
@@ -175,18 +245,51 @@
     }
   });
 
-  // 4. 地図連動 ＆ 自分所有権つきリアルタイム描画処理
+  // 4. 部隊（スクワッド）切り替え処理
+  const squadBtns = document.querySelectorAll('.squad-btn:not(#setNameBtn)');
+  const hudTitle = document.getElementById('hudTitle');
+
+  squadBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      squadBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentSquad = btn.dataset.squad;
+
+      if (currentSquad === 'all') {
+        hudTitle.innerText = `UAV RECON // COMMAND (ALL)`;
+        toggleDrawBtn.style.display = 'none';
+        if (isDrawingMode) disableDrawingMode();
+      } else {
+        hudTitle.innerText = `UAV RECON // SQUAD-${currentSquad.toUpperCase()}`;
+        toggleDrawBtn.style.display = 'block';
+      }
+
+      syncDrawings();
+    });
+  });
+
+  // 5. 地図連動 ＆ 部隊別リアルタイム描画処理
   const toggleDrawBtn = document.getElementById('toggleDrawBtn');
   const clearDrawBtn = document.getElementById('clearDrawBtn');
-  const drawnLinesRef = ref(db, `teams/${teamId}/drawings`);
 
   let isDrawingMode = false;
   let isPenDown = false;
   let currentPolyline = null;
   let currentPoints = [];
-  const mapLines = {};
+  let mapLines = {};
+
+  function disableDrawingMode() {
+    isDrawingMode = false;
+    toggleDrawBtn.classList.remove('active');
+    toggleDrawBtn.innerText = "DRAW: OFF";
+    map.dragging.enable();
+    map.touchZoom.enable();
+    map.doubleClickZoom.enable();
+  }
 
   toggleDrawBtn.addEventListener('click', () => {
+    if (currentSquad === 'all') return;
+
     isDrawingMode = !isDrawingMode;
     if (isDrawingMode) {
       toggleDrawBtn.classList.add('active');
@@ -195,32 +298,31 @@
       map.touchZoom.disable();
       map.doubleClickZoom.disable();
     } else {
-      toggleDrawBtn.classList.remove('active');
-      toggleDrawBtn.innerText = "DRAW: OFF";
-      map.dragging.enable();
-      map.touchZoom.enable();
-      map.doubleClickZoom.enable();
+      disableDrawingMode();
     }
   });
 
-  // 自分描画分のみクリアする処理
   clearDrawBtn.addEventListener('click', async () => {
-    const snapshot = await get(drawnLinesRef);
-    if (snapshot.exists()) {
-      const drawings = snapshot.val();
-      Object.keys(drawings).forEach((lineId) => {
-        if (drawings[lineId].authorId === userId) {
-          const singleLineRef = ref(db, `teams/${teamId}/drawings/${lineId}`);
-          remove(singleLineRef);
-        }
-      });
+    if (currentSquad === 'all') {
+      remove(ref(db, `ops/${operationId}/drawings`));
+    } else {
+      const drawnLinesRef = ref(db, `ops/${operationId}/drawings`);
+      const snapshot = await get(drawnLinesRef);
+      if (snapshot.exists()) {
+        const drawings = snapshot.val();
+        Object.keys(drawings).forEach((lineId) => {
+          if (drawings[lineId].squad === currentSquad) {
+            remove(ref(db, `ops/${operationId}/drawings/${lineId}`));
+          }
+        });
+      }
     }
   });
 
   const mapContainer = map.getContainer();
 
   function startLine(e) {
-    if (!isDrawingMode) return;
+    if (!isDrawingMode || currentSquad === 'all') return;
     isPenDown = true;
     
     const containerPoint = getContainerPoint(e);
@@ -228,7 +330,7 @@
     currentPoints = [[latLng.lat, latLng.lng]];
 
     currentPolyline = L.polyline(currentPoints, {
-      color: '#ff0055',
+      color: SQUAD_COLORS[currentSquad] || '#ff0055',
       weight: 4,
       opacity: 0.9
     }).addTo(map);
@@ -249,9 +351,11 @@
     isPenDown = false;
 
     if (currentPoints.length > 1) {
+      const drawnLinesRef = ref(db, `ops/${operationId}/drawings`);
       const newLineRef = push(drawnLinesRef);
       set(newLineRef, {
-        authorId: userId, // 描画者のIDを保持
+        authorId: userId,
+        squad: currentSquad,
         points: currentPoints,
         createdAt: Date.now()
       });
@@ -277,41 +381,65 @@
   mapContainer.addEventListener('mousemove', drawLine);
   mapContainer.addEventListener('mouseup', stopLine);
 
-  // 5. Firebaseからリアルタイムに落書きを受信＆描画
-  onValue(drawnLinesRef, (snapshot) => {
-    const drawings = snapshot.val() || {};
+  // 6. Firebaseからのリアルタイム作戦線データ同期
+  let drawingsUnsubscribe = null;
 
-    Object.keys(mapLines).forEach((lineId) => {
-      if (!drawings[lineId]) {
-        map.removeLayer(mapLines[lineId]);
-        delete mapLines[lineId];
-      }
-    });
+  function syncDrawings() {
+    Object.keys(mapLines).forEach(id => map.removeLayer(mapLines[id]));
+    mapLines = {};
 
-    Object.keys(drawings).forEach((lineId) => {
-      if (!mapLines[lineId]) {
+    const drawnLinesRef = ref(db, `ops/${operationId}/drawings`);
+
+    if (drawingsUnsubscribe) drawingsUnsubscribe();
+
+    drawingsUnsubscribe = onValue(drawnLinesRef, (snapshot) => {
+      const drawings = snapshot.val() || {};
+
+      Object.keys(mapLines).forEach((lineId) => {
+        if (!drawings[lineId]) {
+          map.removeLayer(mapLines[lineId]);
+          delete mapLines[lineId];
+        }
+      });
+
+      Object.keys(drawings).forEach((lineId) => {
         const lineData = drawings[lineId];
-        const polyline = L.polyline(lineData.points, {
-          color: lineData.authorId === userId ? '#ff0055' : '#ffaa00', // 自分の線は赤、味方の線はオレンジで区別
-          weight: 4,
-          opacity: 0.9
-        }).addTo(map);
-        mapLines[lineId] = polyline;
-      }
-    });
-  });
+        const shouldShow = (currentSquad === 'all') || (lineData.squad === currentSquad);
 
-  // 6. UAVスキャン処理
+        if (shouldShow) {
+          if (!mapLines[lineId]) {
+            const lineColor = SQUAD_COLORS[lineData.squad] || '#ffffff';
+            const polyline = L.polyline(lineData.points, {
+              color: lineColor,
+              weight: 4,
+              opacity: 0.9
+            }).addTo(map);
+            mapLines[lineId] = polyline;
+          }
+        } else {
+          if (mapLines[lineId]) {
+            map.removeLayer(mapLines[lineId]);
+            delete mapLines[lineId];
+          }
+        }
+      });
+    });
+  }
+
+  syncDrawings();
+
+  // 7. UAVスキャン処理
   const SCAN_INTERVAL_SEC = 60;
   let countdown = SCAN_INTERVAL_SEC;
 
   function executeUAVScan() {
     if (currentLat && currentLng) {
-      const userRef = ref(db, `teams/${teamId}/players/${userId}`);
+      const userRef = ref(db, `ops/${operationId}/players/${userId}`);
       onDisconnect(userRef).remove();
 
       set(userRef, {
         u: userId,
+        squad: currentSquad === 'all' ? 'hq' : currentSquad,
         lat: currentLat,
         lng: currentLng,
         scannedAt: Date.now()
@@ -340,7 +468,7 @@
     document.getElementById("uavTimer").innerText = `NEXT SCAN: ${countdown}S`;
   }, 1000);
 
-  // 7. GPS位置取得
+  // 8. GPS位置取得
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -377,8 +505,8 @@
     alert("GPS非対応の端末です。");
   }
 
-  // 8. 味方位置同期
-  const teamPlayersRef = ref(db, `teams/${teamId}/players`);
+  // 9. 味方位置同期 & タップ（クリック）でポップアップ表示
+  const teamPlayersRef = ref(db, `ops/${operationId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
     const players = snapshot.val() || {};
 
@@ -392,18 +520,27 @@
     Object.values(players).forEach((p) => {
       const isMe = p.u === userId;
       const markerClass = isMe ? 'player-marker-me' : 'player-marker-team';
+      const squadTag = (p.squad || '').toUpperCase();
+      const labelText = isMe ? `YOU (${p.u})` : `${p.u} [${squadTag}]`;
 
       if (playerMarkers[p.u]) {
         playerMarkers[p.u].setLatLng([p.lat, p.lng]);
+        playerMarkers[p.u].setTooltipContent(labelText);
       } else {
         const customIcon = L.divIcon({
           className: markerClass,
-          iconSize: [14, 14],
-          iconAnchor: [7, 7]
+          iconSize: isMe ? [10, 10] : [8, 8],
+          iconAnchor: isMe ? [5, 5] : [4, 4]
         });
 
+        // permanent: false にしてピンを触った（タップ/ホバー）時だけ表示
         const marker = L.marker([p.lat, p.lng], { icon: customIcon })
-          .bindTooltip(isMe ? 'YOU' : p.u, { permanent: true, direction: 'bottom', offset: [0, 8] })
+          .bindTooltip(labelText, { 
+            permanent: false, 
+            direction: 'top', 
+            offset: [0, -6],
+            className: 'leaflet-tooltip-custom'
+          })
           .addTo(map);
 
         playerMarkers[p.u] = marker;
