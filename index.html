@@ -27,10 +27,10 @@
       top: 0; left: 0;
       width: 100vw; height: 100vh;
       z-index: 500;
-      pointer-events: none; /* デフォルトは操作透過 */
+      pointer-events: none;
     }
     #drawCanvas.active {
-      pointer-events: auto; /* 描画モード時のみタッチイベントを取得 */
+      pointer-events: auto;
     }
 
     /* 軍用HUD風ディスプレイ */
@@ -55,7 +55,14 @@
       font-size: 11px; color: #00ffcc; margin-top: 4px;
     }
 
-    /* 作戦描画用コントロールUI */
+    /* 右上：全画面表示ボタン */
+    .fullscreen-control {
+      position: absolute;
+      top: 12px; right: 12px; z-index: 1000;
+      pointer-events: auto;
+    }
+
+    /* 右下：作戦描画用コントロールUI */
     .draw-controls {
       position: absolute;
       bottom: 20px; right: 12px; z-index: 1000;
@@ -98,6 +105,12 @@
   <div class="hud-status" id="statusText">ACQUIRING GPS...</div>
 </div>
 
+<!-- 全画面切り替えボタン -->
+<div class="fullscreen-control">
+  <button id="fullScreenBtn" class="hud-btn">FULLSCREEN</button>
+</div>
+
+<!-- 作戦描画ボタン -->
 <div class="draw-controls">
   <button id="toggleDrawBtn" class="hud-btn">DRAW: OFF</button>
   <button id="clearDrawBtn" class="hud-btn">CLEAR</button>
@@ -156,7 +169,30 @@
   let isMapInitialized = false;
 
   // ==========================================
-  // 3. 作戦描画キャンバス（手書き機能）
+  // 3. 全画面モード制御（Fullscreen API）
+  // ==========================================
+  const fullScreenBtn = document.getElementById('fullScreenBtn');
+
+  fullScreenBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen();
+      } else if (document.documentElement.webkitRequestFullscreen) { // Safari (iOS/Mac) 対応
+        document.documentElement.webkitRequestFullscreen();
+      }
+      fullScreenBtn.innerText = "EXIT FULL";
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      }
+      fullScreenBtn.innerText = "FULLSCREEN";
+    }
+  });
+
+  // ==========================================
+  // 4. 作戦描画キャンバス（手書き機能）
   // ==========================================
   const canvas = document.getElementById('drawCanvas');
   const ctx = canvas.getContext('2d');
@@ -168,6 +204,7 @@
   function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+    map.invalidateSize(); // リサイズ時に地図描画も自動更新
   }
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
@@ -206,7 +243,7 @@
     const pos = getTouchPos(e);
     ctx.beginPath();
     ctx.moveTo(pos.x, pos.y);
-    ctx.strokeStyle = '#ff0055'; // 軍用タクティカルレッド
+    ctx.strokeStyle = '#ff0055'; // タクティカルレッド
     ctx.lineWidth = 4;
     ctx.lineCap = 'round';
   }
@@ -230,7 +267,7 @@
   canvas.addEventListener('mouseup', stopDrawing);
 
   // ==========================================
-  // 4. UAVスキャン処理（1分間隔 ＆ バイブ通知）
+  // 5. UAVスキャン処理（1分間隔 ＆ バイブ通知）
   // ==========================================
   const SCAN_INTERVAL_SEC = 60;
   let countdown = SCAN_INTERVAL_SEC;
@@ -271,7 +308,7 @@
   }, 1000);
 
   // ==========================================
-  // 5. 初回現在地でマップ起動 ＆ GPS保持
+  // 6. 初回現在地でマップ起動 ＆ GPS保持
   // ==========================================
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
@@ -310,7 +347,7 @@
   }
 
   // ==========================================
-  // 6. 味方位置の受信・同期
+  // 7. 味方位置の受信・同期
   // ==========================================
   const teamPlayersRef = ref(db, `teams/${teamId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
