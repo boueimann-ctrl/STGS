@@ -24,7 +24,7 @@
       background-color: #050b14;
     }
 
-    /* 起動時 サウンド・バイブ確認＆エントリー用オーバーレイ */
+    /* 起動時 サウンド確認＆エントリー用オーバーレイ */
     .init-modal-overlay {
       position: fixed;
       top: 0; left: 0; width: 100vw; height: 100vh;
@@ -222,15 +222,15 @@
 </head>
 <body>
 
-<!-- 初期接続・サウンド＆バイブレーションテスト画面 -->
+<!-- 初期接続・サウンドテスト画面 -->
 <div class="init-modal-overlay" id="initModal">
   <div class="init-card">
     <div class="init-title">TACTICAL SYSTEM INIT</div>
     <div class="init-desc">
       作戦開始前の端末チェックを行います。<br>
-      テストボタンを押して通知音とバイブレーションを確認してください。
+      テストボタンを押して通知音を確認してください。
     </div>
-    <button class="init-btn" id="testAudioBtn">TEST AUDIO & VIBE 🔊</button>
+    <button class="init-btn" id="testAudioBtn">TEST AUDIO 🔊</button>
     <button class="init-btn init-btn-primary" id="joinOpBtn" disabled>JOIN OPERATION (START GPS)</button>
   </div>
 </div>
@@ -345,10 +345,6 @@
   testAudioBtn.addEventListener('click', () => {
     initAudioContext();
     playBeep(1200, 0.08, 3, 90);
-
-    if ("vibrate" in navigator) {
-      try { navigator.vibrate([150, 80, 150, 80, 150]); } catch (e) {}
-    }
 
     isAudioTested = true;
     joinOpBtn.disabled = false;
@@ -731,10 +727,6 @@
       // UAVスキャン完了音（高めの音で3回鳴動）
       playBeep(1500, 0.08, 3, 90);
 
-      if ("vibrate" in navigator) {
-        try { navigator.vibrate([120, 80, 120, 80, 120]); } catch (e) {}
-      }
-
       const statusText = document.getElementById("statusText");
       statusText.innerText = "UAV SCAN COMPLETE";
       statusText.style.color = "#ffffff";
@@ -777,9 +769,6 @@
     // スキャン10秒前の予告通知（警告音を3回鳴動）
     if (remainingScanSec === 10 && lastNotifiedSec !== elapsedSec) {
       playBeep(700, 0.10, 3, 110);
-      if ("vibrate" in navigator) {
-        try { navigator.vibrate([200, 100, 200]); } catch (e) {}
-      }
       lastNotifiedSec = elapsedSec;
     }
 
