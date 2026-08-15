@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>BFT - UAV Tactical Tracker</title>
   
-  <!-- Web App Manifest (iOS/Android全画面化用) -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   
@@ -23,18 +22,6 @@
     #map {
       height: 100vh; width: 100vw;
       background-color: #050b14;
-    }
-    
-    /* 作戦描画用キャンバス */
-    #drawCanvas {
-      position: absolute;
-      top: 0; left: 0;
-      width: 100vw; height: 100vh;
-      z-index: 500;
-      pointer-events: none;
-    }
-    #drawCanvas.active {
-      pointer-events: auto;
     }
 
     /* 軍用HUD風ディスプレイ */
@@ -110,18 +97,15 @@
   <div class="hud-status" id="statusText">ACQUIRING GPS...</div>
 </div>
 
-<!-- 全画面切り替えボタン -->
 <div class="fullscreen-control">
   <button id="fullScreenBtn" class="hud-btn">FULLSCREEN</button>
 </div>
 
-<!-- 作戦描画ボタン -->
 <div class="draw-controls">
   <button id="toggleDrawBtn" class="hud-btn">DRAW: OFF</button>
   <button id="clearDrawBtn" class="hud-btn">CLEAR</button>
 </div>
 
-<canvas id="drawCanvas"></canvas>
 <div id="map"></div>
 
 <!-- Leaflet JS -->
@@ -131,7 +115,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import { 
-    getDatabase, ref, set, onValue, onDisconnect 
+    getDatabase, ref, set, push, onValue, remove, onDisconnect 
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
   // 1. Firebase 設定
@@ -169,9 +153,8 @@
   let currentLng = null;
   let isMapInitialized = false;
 
-  // 3. 全画面モード制御（フォールバック強化）
+  // 3. 全画面モード制御
   const fullScreenBtn = document.getElementById('fullScreenBtn');
-
   fullScreenBtn.addEventListener('click', () => {
     const docElm = document.documentElement;
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
@@ -180,7 +163,7 @@
       } else if (docElm.webkitRequestFullscreen) {
         docElm.webkitRequestFullscreen();
       }
-      window.scrollTo(0, 1); // iOSバー隠し処理
+      window.scrollTo(0, 1);
       fullScreenBtn.innerText = "EXIT FULL";
     } else {
       if (document.exitFullscreen) {
@@ -192,33 +175,26 @@
     }
   });
 
-  // 4. 作戦描画キャンバス（タッチ精度強化）
-  const canvas = document.getElementById('drawCanvas');
-  const ctx = canvas.getContext('2d');
+  // 4. 地図連動 ＆ リアルタイム共有型作戦描画処理
   const toggleDrawBtn = document.getElementById('toggleDrawBtn');
   const clearDrawBtn = document.getElementById('clearDrawBtn');
+  const drawnLinesRef = ref(db, `teams/${teamId}/drawings`);
+
   let isDrawingMode = false;
   let isPenDown = false;
-
-  function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    if (map) map.invalidateSize();
-  }
-  window.addEventListener('resize', resizeCanvas);
-  resizeCanvas();
+  let currentPolyline = null;
+  let currentPoints = [];
+  const mapLines = {};
 
   toggleDrawBtn.addEventListener('click', () => {
     isDrawingMode = !isDrawingMode;
     if (isDrawingMode) {
-      canvas.classList.add('active');
       toggleDrawBtn.classList.add('active');
       toggleDrawBtn.innerText = "DRAW: ON";
       map.dragging.disable();
       map.touchZoom.disable();
       map.doubleClickZoom.disable();
     } else {
-      canvas.classList.remove('active');
       toggleDrawBtn.classList.remove('active');
       toggleDrawBtn.innerText = "DRAW: OFF";
       map.dragging.enable();
@@ -228,50 +204,93 @@
   });
 
   clearDrawBtn.addEventListener('click', () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    remove(drawnLinesRef);
   });
 
-  function getTouchPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const touch = e.touches ? e.touches[0] : e;
-    return {
-      x: touch.clientX - rect.left,
-      y: touch.clientY - rect.top
-    };
-  }
+  const mapContainer = map.getContainer();
 
-  function startDrawing(e) {
+  function startLine(e) {
     if (!isDrawingMode) return;
-    if (e.touches && e.touches.length > 1) return; // マルチタッチ防止
     isPenDown = true;
-    const pos = getTouchPos(e);
-    ctx.beginPath();
-    ctx.moveTo(pos.x, pos.y);
-    ctx.strokeStyle = '#ff0055';
-    ctx.lineWidth = 4;
-    ctx.lineCap = 'round';
+    
+    const containerPoint = getContainerPoint(e);
+    const latLng = map.containerPointToLatLng(containerPoint);
+    currentPoints = [[latLng.lat, latLng.lng]];
+
+    currentPolyline = L.polyline(currentPoints, {
+      color: '#ff0055',
+      weight: 4,
+      opacity: 0.9
+    }).addTo(map);
   }
 
-  function draw(e) {
+  function drawLine(e) {
     if (!isPenDown || !isDrawingMode) return;
-    if (e.cancelable) e.preventDefault(); // スクロール防止
-    const pos = getTouchPos(e);
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
+    if (e.cancelable) e.preventDefault();
+
+    const containerPoint = getContainerPoint(e);
+    const latLng = map.containerPointToLatLng(containerPoint);
+    currentPoints.push([latLng.lat, latLng.lng]);
+    currentPolyline.setLatLngs(currentPoints);
   }
 
-  function stopDrawing() {
+  function stopLine() {
+    if (!isPenDown || !isDrawingMode) return;
     isPenDown = false;
+
+    if (currentPoints.length > 1) {
+      const newLineRef = push(drawnLinesRef);
+      set(newLineRef, {
+        points: currentPoints,
+        createdAt: Date.now()
+      });
+    }
+
+    if (currentPolyline) {
+      map.removeLayer(currentPolyline);
+      currentPolyline = null;
+    }
+    currentPoints = [];
   }
 
-  canvas.addEventListener('touchstart', startDrawing, { passive: false });
-  canvas.addEventListener('touchmove', draw, { passive: false });
-  canvas.addEventListener('touchend', stopDrawing);
-  canvas.addEventListener('mousedown', startDrawing);
-  canvas.addEventListener('mousemove', draw);
-  canvas.addEventListener('mouseup', stopDrawing);
+  function getContainerPoint(e) {
+    const rect = mapContainer.getBoundingClientRect();
+    const touch = e.touches ? e.touches[0] : e;
+    return L.point(touch.clientX - rect.left, touch.clientY - rect.top);
+  }
 
-  // 5. UAVスキャン処理
+  mapContainer.addEventListener('touchstart', startLine, { passive: false });
+  mapContainer.addEventListener('touchmove', drawLine, { passive: false });
+  mapContainer.addEventListener('touchend', stopLine);
+  mapContainer.addEventListener('mousedown', startLine);
+  mapContainer.addEventListener('mousemove', drawLine);
+  mapContainer.addEventListener('mouseup', stopLine);
+
+  // 5. Firebaseからリアルタイムに落書きを受信＆描画
+  onValue(drawnLinesRef, (snapshot) => {
+    const drawings = snapshot.val() || {};
+
+    Object.keys(mapLines).forEach((lineId) => {
+      if (!drawings[lineId]) {
+        map.removeLayer(mapLines[lineId]);
+        delete mapLines[lineId];
+      }
+    });
+
+    Object.keys(drawings).forEach((lineId) => {
+      if (!mapLines[lineId]) {
+        const lineData = drawings[lineId];
+        const polyline = L.polyline(lineData.points, {
+          color: '#ff0055',
+          weight: 4,
+          opacity: 0.9
+        }).addTo(map);
+        mapLines[lineId] = polyline;
+      }
+    });
+  });
+
+  // 6. UAVスキャン処理
   const SCAN_INTERVAL_SEC = 60;
   let countdown = SCAN_INTERVAL_SEC;
 
@@ -310,7 +329,7 @@
     document.getElementById("uavTimer").innerText = `NEXT SCAN: ${countdown}S`;
   }, 1000);
 
-  // 6. GPS位置取得
+  // 7. GPS位置取得
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -347,7 +366,7 @@
     alert("GPS非対応の端末です。");
   }
 
-  // 7. 味方位置同期
+  // 8. 味方位置同期
   const teamPlayersRef = ref(db, `teams/${teamId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
     const players = snapshot.val() || {};
