@@ -2,14 +2,18 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>BFT - UAV Tactical Tracker</title>
+  
+  <!-- Web App Manifest (iOS/Android全画面化用) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   
   <style>
-    * { box-sizing: border-box; touch-action: none; }
+    * { box-sizing: border-box; touch-action: none; -webkit-user-select: none; }
     body, html {
       margin: 0; padding: 0; width: 100%; height: 100%;
       overflow: hidden; background-color: #050b14;
@@ -78,6 +82,7 @@
       font-size: 12px; font-weight: bold;
       border-radius: 4px;
       box-shadow: 0 0 8px rgba(0, 255, 204, 0.2);
+      cursor: pointer;
     }
     .hud-btn.active {
       background: #00ffcc;
@@ -122,16 +127,14 @@
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- Firebase SDK (v10 Modular CDN) -->
+<!-- Firebase SDK -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import { 
     getDatabase, ref, set, onValue, onDisconnect 
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-  // ==========================================
   // 1. Firebase 設定
-  // ==========================================
   const firebaseConfig = {
     apiKey: "AIzaSyBXskTRVUm4CL9rPQj110sw59M20OyJi28",
     authDomain: "spac-gps.firebaseapp.com",
@@ -149,9 +152,7 @@
   const userId = "OPERATOR_" + Math.floor(100 + Math.random() * 900);
   const teamId = "alpha_squad";
 
-  // ==========================================
-  // 2. 地図の初期化（最大ズームレベル21）
-  // ==========================================
+  // 2. 地図の初期化
   const map = L.map('map', {
     zoomControl: false,
     attributionControl: false,
@@ -168,22 +169,22 @@
   let currentLng = null;
   let isMapInitialized = false;
 
-  // ==========================================
-  // 3. 全画面モード制御（Fullscreen API）
-  // ==========================================
+  // 3. 全画面モード制御（フォールバック強化）
   const fullScreenBtn = document.getElementById('fullScreenBtn');
 
   fullScreenBtn.addEventListener('click', () => {
+    const docElm = document.documentElement;
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-      if (document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen();
-      } else if (document.documentElement.webkitRequestFullscreen) { // Safari (iOS/Mac) 対応
-        document.documentElement.webkitRequestFullscreen();
+      if (docElm.requestFullscreen) {
+        docElm.requestFullscreen().catch(() => {});
+      } else if (docElm.webkitRequestFullscreen) {
+        docElm.webkitRequestFullscreen();
       }
+      window.scrollTo(0, 1); // iOSバー隠し処理
       fullScreenBtn.innerText = "EXIT FULL";
     } else {
       if (document.exitFullscreen) {
-        document.exitFullscreen();
+        document.exitFullscreen().catch(() => {});
       } else if (document.webkitExitFullscreen) {
         document.webkitExitFullscreen();
       }
@@ -191,9 +192,7 @@
     }
   });
 
-  // ==========================================
-  // 4. 作戦描画キャンバス（手書き機能）
-  // ==========================================
+  // 4. 作戦描画キャンバス（タッチ精度強化）
   const canvas = document.getElementById('drawCanvas');
   const ctx = canvas.getContext('2d');
   const toggleDrawBtn = document.getElementById('toggleDrawBtn');
@@ -204,7 +203,7 @@
   function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    map.invalidateSize(); // リサイズ時に地図描画も自動更新
+    if (map) map.invalidateSize();
   }
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
@@ -216,11 +215,15 @@
       toggleDrawBtn.classList.add('active');
       toggleDrawBtn.innerText = "DRAW: ON";
       map.dragging.disable();
+      map.touchZoom.disable();
+      map.doubleClickZoom.disable();
     } else {
       canvas.classList.remove('active');
       toggleDrawBtn.classList.remove('active');
       toggleDrawBtn.innerText = "DRAW: OFF";
       map.dragging.enable();
+      map.touchZoom.enable();
+      map.doubleClickZoom.enable();
     }
   });
 
@@ -239,17 +242,19 @@
 
   function startDrawing(e) {
     if (!isDrawingMode) return;
+    if (e.touches && e.touches.length > 1) return; // マルチタッチ防止
     isPenDown = true;
     const pos = getTouchPos(e);
     ctx.beginPath();
     ctx.moveTo(pos.x, pos.y);
-    ctx.strokeStyle = '#ff0055'; // タクティカルレッド
+    ctx.strokeStyle = '#ff0055';
     ctx.lineWidth = 4;
     ctx.lineCap = 'round';
   }
 
   function draw(e) {
     if (!isPenDown || !isDrawingMode) return;
+    if (e.cancelable) e.preventDefault(); // スクロール防止
     const pos = getTouchPos(e);
     ctx.lineTo(pos.x, pos.y);
     ctx.stroke();
@@ -259,16 +264,14 @@
     isPenDown = false;
   }
 
-  canvas.addEventListener('touchstart', startDrawing);
-  canvas.addEventListener('touchmove', draw);
+  canvas.addEventListener('touchstart', startDrawing, { passive: false });
+  canvas.addEventListener('touchmove', draw, { passive: false });
   canvas.addEventListener('touchend', stopDrawing);
   canvas.addEventListener('mousedown', startDrawing);
   canvas.addEventListener('mousemove', draw);
   canvas.addEventListener('mouseup', stopDrawing);
 
-  // ==========================================
-  // 5. UAVスキャン処理（1分間隔 ＆ バイブ通知）
-  // ==========================================
+  // 5. UAVスキャン処理
   const SCAN_INTERVAL_SEC = 60;
   let countdown = SCAN_INTERVAL_SEC;
 
@@ -307,9 +310,7 @@
     document.getElementById("uavTimer").innerText = `NEXT SCAN: ${countdown}S`;
   }, 1000);
 
-  // ==========================================
-  // 6. 初回現在地でマップ起動 ＆ GPS保持
-  // ==========================================
+  // 6. GPS位置取得
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -346,9 +347,7 @@
     alert("GPS非対応の端末です。");
   }
 
-  // ==========================================
-  // 7. 味方位置の受信・同期
-  // ==========================================
+  // 7. 味方位置同期
   const teamPlayersRef = ref(db, `teams/${teamId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
     const players = snapshot.val() || {};
