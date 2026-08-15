@@ -271,8 +271,8 @@
     }
   }
 
-  // 電子効果音の再生関数
-  function playBeep(freq = 880, duration = 0.1, count = 1, interval = 100) {
+  // 電子効果音の再生関数（3回連続鳴動対応）
+  function playBeep(freq = 880, duration = 0.08, count = 3, interval = 90) {
     if (!audioCtx) return;
     initAudioContext();
 
@@ -285,7 +285,7 @@
           osc.type = 'sine';
           osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
 
-          gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
           gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
 
           osc.connect(gain);
@@ -307,10 +307,10 @@
 
   testAudioBtn.addEventListener('click', () => {
     initAudioContext();
-    playBeep(1200, 0.08, 2, 90);
+    playBeep(1200, 0.08, 3, 90);
 
     if ("vibrate" in navigator) {
-      try { navigator.vibrate([150, 100, 150]); } catch (e) {}
+      try { navigator.vibrate([150, 80, 150, 80, 150]); } catch (e) {}
     }
 
     isAudioTested = true;
@@ -631,7 +631,7 @@
   // STARTボタンクリック（確認ダイアログ付き）
   startTimerBtn.addEventListener('click', () => {
     const inputDuration = prompt("作戦時間（分）を入力してください:", "30");
-    if (inputDuration === null) return; // キャンセル時
+    if (inputDuration === null) return;
 
     const duration = parseInt(inputDuration, 10);
     if (isNaN(duration) || duration <= 0) {
@@ -669,11 +669,11 @@
         scannedAt: Date.now()
       });
 
-      // UAVスキャン完了音（高めのピピッ音）
-      playBeep(1500, 0.08, 2, 80);
+      // UAVスキャン完了音（高めの音で3回鳴動）
+      playBeep(1500, 0.08, 3, 90);
 
       if ("vibrate" in navigator) {
-        try { navigator.vibrate([120, 80, 120]); } catch (e) {}
+        try { navigator.vibrate([120, 80, 120, 80, 120]); } catch (e) {}
       }
 
       const statusText = document.getElementById("statusText");
@@ -707,18 +707,18 @@
     const opMin = Math.floor(remainingOpSec / 60);
     const opSec = remainingOpSec % 60;
     opTimeRemaining.innerText = `${String(opMin).padStart(2, '0')}:${String(opSec).padStart(2, '0')}`;
-    opTimeRemaining.style.color = remainingOpSec < 300 ? "#ff0055" : "#ffaa00"; // 残り5分以下で赤色
+    opTimeRemaining.style.color = remainingOpSec < 300 ? "#ff0055" : "#ffaa00";
 
     // 2. UAV定期スキャンタイマーの計算 (左上表示)
     const currentCycle = Math.floor(elapsedSec / SCAN_INTERVAL_SEC);
     const secondsInCycle = elapsedSec % SCAN_INTERVAL_SEC;
     const remainingScanSec = SCAN_INTERVAL_SEC - secondsInCycle;
 
-    // スキャン10秒前の予告通知（音＆バイブ）
+    // スキャン10秒前の予告通知（警告音を3回鳴動）
     if (remainingScanSec === 10 && lastNotifiedSec !== elapsedSec) {
-      playBeep(600, 0.12, 2, 120);
+      playBeep(700, 0.10, 3, 110);
       if ("vibrate" in navigator) {
-        try { navigator.vibrate([200]); } catch (e) {}
+        try { navigator.vibrate([200, 100, 200]); } catch (e) {}
       }
       lastNotifiedSec = elapsedSec;
     }
@@ -729,7 +729,7 @@
       lastScannedCycle = currentCycle;
     }
 
-    document.getElementById("uavTimer").innerText = `NEXT SCAN: ${remainingScanSec}S`;
+    document.getElementById("uavTimer").innerText = `NEXT SCAN: ${remainingScanScanSec = remainingScanSec}S`;
   }, 200);
 
   // 8. GPS位置取得
