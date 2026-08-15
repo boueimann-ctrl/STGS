@@ -77,7 +77,7 @@
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
   // ==========================================
-  // 1. Firebase 設定（発行された固有キーを適用済み）
+  // 1. Firebase 設定
   // ==========================================
   const firebaseConfig = {
     apiKey: "AIzaSyBXskTRVUm4CL9rPQj110sw59M20OyJi28",
@@ -97,15 +97,17 @@
   const teamId = "alpha_squad";
 
   // ==========================================
-  // 2. 地図の初期化
+  // 2. 地図の初期化（拡大制限をレベル21まで解放）
   // ==========================================
   const map = L.map('map', {
     zoomControl: false,
-    attributionControl: false
+    attributionControl: false,
+    maxZoom: 21
   });
 
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19
+    maxNativeZoom: 19,
+    maxZoom: 21
   }).addTo(map);
 
   const playerMarkers = {};
@@ -164,7 +166,7 @@
         currentLat = position.coords.latitude;
         currentLng = position.coords.longitude;
 
-        map.setView([currentLat, currentLng], 19);
+        map.setView([currentLat, currentLng], 20);
         isMapInitialized = true;
         executeUAVScan();
       },
@@ -182,7 +184,7 @@
         currentLng = position.coords.longitude;
 
         if (!isMapInitialized) {
-          map.setView([currentLat, currentLng], 19);
+          map.setView([currentLat, currentLng], 20);
           isMapInitialized = true;
           executeUAVScan();
         }
