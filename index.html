@@ -24,6 +24,45 @@
       background-color: #050b14;
     }
 
+    /* 起動時 バイブレーション確認＆エントリー用オーバーレイ */
+    .init-modal-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(5, 11, 20, 0.95);
+      z-index: 9999;
+      display: flex; flex-direction: column;
+      justify-content: center; align-items: center;
+      padding: 24px; text-align: center;
+    }
+    .init-card {
+      border: 1px solid #00ffcc;
+      background: rgba(5, 11, 20, 0.9);
+      padding: 24px; border-radius: 6px;
+      box-shadow: 0 0 20px rgba(0, 255, 204, 0.3);
+      max-width: 320px; width: 100%;
+    }
+    .init-title {
+      font-size: 16px; font-weight: bold; margin-bottom: 12px; color: #ffffff;
+      letter-spacing: 1px;
+    }
+    .init-desc {
+      font-size: 11px; line-height: 1.5; color: #88ffdd; margin-bottom: 20px;
+    }
+    .init-btn {
+      width: 100%; padding: 12px; margin-bottom: 10px;
+      background: rgba(0, 255, 204, 0.1);
+      border: 1px solid #00ffcc; color: #00ffcc;
+      font-family: inherit; font-weight: bold; font-size: 12px;
+      border-radius: 4px; cursor: pointer;
+    }
+    .init-btn-primary {
+      background: #00ffcc; color: #050b14;
+    }
+    .init-btn-primary:disabled {
+      background: #335544; color: #888888; border-color: #446655;
+      cursor: not-allowed;
+    }
+
     /* 軍用HUD風ディスプレイ */
     .hud-overlay {
       position: absolute;
@@ -46,10 +85,10 @@
       font-size: 11px; color: #00ffcc; margin-top: 4px;
     }
 
-    /* 部隊（スクワッド）選択UI & 名前変更 */
+    /* 部隊（スクワッド）選択UI & コントロール */
     .squad-selector {
       margin-top: 8px;
-      display: flex; gap: 6px; align-items: center;
+      display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
     }
     .squad-btn {
       background: rgba(5, 11, 20, 0.8);
@@ -123,17 +162,31 @@
 </head>
 <body>
 
+<!-- 初期接続・バイブレーションテスト画面 -->
+<div class="init-modal-overlay" id="initModal">
+  <div class="init-card">
+    <div class="init-title">TACTICAL SYSTEM INIT</div>
+    <div class="init-desc">
+      作戦開始前の端末チェックを行います。<br>
+      バイブレーションテストを実施して動作を確認してください。
+    </div>
+    <button class="init-btn" id="testVibeBtn">TEST VIBRATION ⚡</button>
+    <button class="init-btn init-btn-primary" id="joinOpBtn" disabled>JOIN OPERATION (START GPS)</button>
+  </div>
+</div>
+
 <div class="hud-overlay">
   <div class="hud-title" id="hudTitle">UAV RECON // SQUAD-ALPHA</div>
-  <div class="hud-timer" id="uavTimer">NEXT SCAN: 60S</div>
-  <div class="hud-status" id="statusText">ACQUIRING GPS...</div>
+  <div class="hud-timer" id="uavTimer">NEXT SCAN: PAUSED</div>
+  <div class="hud-status" id="statusText">AWAITING OPERATION START</div>
   
-  <!-- コンパクト部隊切り替えUI -->
+  <!-- コンパクト部隊切り替え & タイマーコントロールUI -->
   <div class="squad-selector">
     <button class="squad-btn" id="squadToggleBtn" style="border-color: #ff0055; color: #ff0055;">SQUAD: ALPHA ↺</button>
     <button class="squad-btn" id="addSquadBtn" style="border-color: #888; color: #fff;">+</button>
     <button class="squad-btn" id="hqBtn" style="border-color: #ffaa00; color: #ffaa00;">ALL (HQ)</button>
     <button class="squad-btn" id="setNameBtn" style="border-color: #ffffff; color: #ffffff;">NAME</button>
+    <button class="squad-btn" id="startTimerBtn" style="border-color: #00ffcc; color: #00ffcc; background: rgba(0,255,204,0.15);">START TAC-TIMER</button>
   </div>
 </div>
 
@@ -168,7 +221,34 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  // 1. ユーザー名設定
+  const operationId = "operation_alpha";
+  let isVibrationTested = false;
+  let isOpJoined = false;
+
+  // 1. 初期テスト＆参戦処理
+  const initModal = document.getElementById('initModal');
+  const testVibeBtn = document.getElementById('testVibeBtn');
+  const joinOpBtn = document.getElementById('joinOpBtn');
+
+  testVibeBtn.addEventListener('click', () => {
+    if ("vibrate" in navigator) {
+      navigator.vibrate([150, 100, 150]);
+    } else {
+      alert("この端末/ブラウザはバイブレーション機能をサポートしていません。");
+    }
+    isVibrationTested = true;
+    joinOpBtn.disabled = false;
+    testVibeBtn.innerText = "TEST OK (RE-TEST) ⚡";
+  });
+
+  joinOpBtn.addEventListener('click', () => {
+    if (!isVibrationTested) return;
+    isOpJoined = true;
+    initModal.style.display = 'none';
+    initGPS();
+  });
+
+  // 2. ユーザー名設定
   let savedName = localStorage.getItem("bft_callsign");
   if (!savedName) {
     savedName = "OPERATOR_" + Math.floor(100 + Math.random() * 900);
@@ -187,9 +267,7 @@
     }
   });
 
-  const operationId = "operation_alpha"; 
-
-  // 2. 部隊管理（動的追加対応 & カラーテーブル）
+  // 3. 部隊管理（動的追加対応 & カラーテーブル）
   let squadList = ["ALPHA", "BRAVO", "CHARLIE"];
   const PRESET_COLORS = ["#ff0055", "#00e5ff", "#76ff03", "#ff9100", "#d500f9", "#ffff00", "#00e676"];
   const SQUAD_COLORS = {
@@ -219,7 +297,7 @@
   let currentLng = null;
   let isMapInitialized = false;
 
-  // 3. 部隊トグル & HQモード切り替え制御
+  // 4. 部隊トグル & HQモード切り替え制御
   const squadToggleBtn = document.getElementById('squadToggleBtn');
   const addSquadBtn = document.getElementById('addSquadBtn');
   const hqBtn = document.getElementById('hqBtn');
@@ -249,7 +327,6 @@
     syncDrawings();
   }
 
-  // 次の部隊へトグル切り替え
   squadToggleBtn.addEventListener('click', () => {
     isHQMode = false;
     currentSquadIndex = (currentSquadIndex + 1) % squadList.length;
@@ -257,7 +334,6 @@
     executeUAVScan();
   });
 
-  // 部隊の新規追加
   addSquadBtn.addEventListener('click', () => {
     const newSquad = prompt("新しい部隊名を入力してください (例: DELTA):");
     if (newSquad && newSquad.trim() !== "") {
@@ -277,14 +353,13 @@
     }
   });
 
-  // HQモード（指揮官モード）のトグル切り替え
   hqBtn.addEventListener('click', () => {
     isHQMode = !isHQMode;
     updateSquadUI();
     executeUAVScan();
   });
 
-  // 4. 地図連動 ＆ 部隊別リアルタイム描画処理
+  // 5. 地図連動 ＆ 部隊別リアルタイム描画処理
   const toggleDrawBtn = document.getElementById('toggleDrawBtn');
   const clearDrawBtn = document.getElementById('clearDrawBtn');
 
@@ -395,7 +470,7 @@
   mapContainer.addEventListener('mousemove', drawLine);
   mapContainer.addEventListener('mouseup', stopLine);
 
-  // 5. Firebaseからのリアルタイム作戦線データ同期
+  // 6. Firebaseからのリアルタイム作戦線データ同期
   let drawingsUnsubscribe = null;
 
   function syncDrawings() {
@@ -442,12 +517,49 @@
 
   syncDrawings();
 
-  // 6. UAVスキャン処理（10秒前通知機能付き）
+  // 7. リーダー統括タイマー ＆ スキャン制御
   const SCAN_INTERVAL_SEC = 60;
-  let countdown = SCAN_INTERVAL_SEC;
+  let opStartTime = null;
+  let lastScannedCycle = -1;
+  let lastVibratedSec = -1;
+
+  const startTimerBtn = document.getElementById('startTimerBtn');
+  const timerRef = ref(db, `ops/${operationId}/timer`);
+
+  // 作戦タイマー共有同期を監視
+  onValue(timerRef, (snapshot) => {
+    const data = snapshot.val();
+    if (data && data.startTime) {
+      opStartTime = data.startTime;
+      lastScannedCycle = -1;
+      startTimerBtn.innerText = "RESET TIMER";
+      startTimerBtn.style.borderColor = "#ffaa00";
+      startTimerBtn.style.color = "#ffaa00";
+    } else {
+      opStartTime = null;
+      document.getElementById("uavTimer").innerText = `NEXT SCAN: PAUSED`;
+      document.getElementById("statusText").innerText = "AWAITING TIMER START";
+      startTimerBtn.innerText = "START TAC-TIMER";
+      startTimerBtn.style.borderColor = "#00ffcc";
+      startTimerBtn.style.color = "#00ffcc";
+    }
+  });
+
+  // リーダーによるタイマー起動/リセット
+  startTimerBtn.addEventListener('click', () => {
+    if (opStartTime) {
+      if (confirm("全プレイヤーの作戦タイマーをリセットしますか？")) {
+        set(timerRef, null);
+      }
+    } else {
+      if (confirm("作戦タイマーを起動し、全員のカウントダウンを開始しますか？")) {
+        set(timerRef, { startTime: Date.now() });
+      }
+    }
+  });
 
   function executeUAVScan() {
-    if (currentLat && currentLng) {
+    if (currentLat && currentLng && isOpJoined) {
       const userRef = ref(db, `ops/${operationId}/players/${userId}`);
       onDisconnect(userRef).remove();
 
@@ -459,9 +571,8 @@
         scannedAt: Date.now()
       });
 
-      // スキャン完了時の振動 (短・休・短)
       if ("vibrate" in navigator) {
-        navigator.vibrate([120, 80, 120]);
+        try { navigator.vibrate([120, 80, 120]); } catch (e) {}
       }
 
       const statusText = document.getElementById("statusText");
@@ -474,61 +585,74 @@
     }
   }
 
+  // タイマーループ (共有開始時刻からの経過時間で計算)
   setInterval(() => {
-    countdown--;
+    if (!opStartTime) return;
 
-    // 10秒前事前予告バイブレーション
-    if (countdown === 10) {
+    const elapsedSec = Math.floor((Date.now() - opStartTime) / 1000);
+    if (elapsedSec < 0) return;
+
+    const currentCycle = Math.floor(elapsedSec / SCAN_INTERVAL_SEC);
+    const secondsInCycle = elapsedSec % SCAN_INTERVAL_SEC;
+    const remainingSec = SCAN_INTERVAL_SEC - secondsInCycle;
+
+    // 10秒前の事前バイブ通知
+    if (remainingSec === 10 && lastVibratedSec !== elapsedSec) {
       if ("vibrate" in navigator) {
-        navigator.vibrate([200]);
+        try { navigator.vibrate([200]); } catch (e) {}
       }
+      lastVibratedSec = elapsedSec;
     }
 
-    if (countdown <= 0) {
+    // 新しいスキャン周期（0秒到達）での処理
+    if (currentCycle > lastScannedCycle) {
       executeUAVScan();
-      countdown = SCAN_INTERVAL_SEC;
+      lastScannedCycle = currentCycle;
     }
-    document.getElementById("uavTimer").innerText = `NEXT SCAN: ${countdown}S`;
-  }, 1000);
 
-  // 7. GPS位置取得
-  if ("geolocation" in navigator) {
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        currentLat = position.coords.latitude;
-        currentLng = position.coords.longitude;
+    document.getElementById("uavTimer").innerText = `NEXT SCAN: ${remainingSec}S`;
+  }, 200);
 
-        map.setView([currentLat, currentLng], 20);
-        isMapInitialized = true;
-        executeUAVScan();
-      },
-      (err) => {
-        console.warn("GPS取得失敗:", err);
-        map.setView([35.9868, 139.8515], 18);
-        isMapInitialized = true;
-      },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-    );
+  // 8. GPS位置取得
+  function initGPS() {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          currentLat = position.coords.latitude;
+          currentLng = position.coords.longitude;
 
-    navigator.geolocation.watchPosition(
-      (position) => {
-        currentLat = position.coords.latitude;
-        currentLng = position.coords.longitude;
-
-        if (!isMapInitialized) {
           map.setView([currentLat, currentLng], 20);
           isMapInitialized = true;
           executeUAVScan();
-        }
-      },
-      (err) => console.error("GPS Error:", err),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
-    );
-  } else {
-    alert("GPS非対応の端末です。");
+        },
+        (err) => {
+          console.warn("GPS取得失敗:", err);
+          map.setView([35.9868, 139.8515], 18);
+          isMapInitialized = true;
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      );
+
+      navigator.geolocation.watchPosition(
+        (position) => {
+          currentLat = position.coords.latitude;
+          currentLng = position.coords.longitude;
+
+          if (!isMapInitialized) {
+            map.setView([currentLat, currentLng], 20);
+            isMapInitialized = true;
+            executeUAVScan();
+          }
+        },
+        (err) => console.error("GPS Error:", err),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
+      );
+    } else {
+      alert("GPS非対応の端末です。");
+    }
   }
 
-  // 8. 味方位置同期
+  // 9. 味方位置同期
   const teamPlayersRef = ref(db, `ops/${operationId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
     const players = snapshot.val() || {};
