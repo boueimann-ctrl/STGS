@@ -103,7 +103,7 @@
 
 <div class="draw-controls">
   <button id="toggleDrawBtn" class="hud-btn">DRAW: OFF</button>
-  <button id="clearDrawBtn" class="hud-btn">CLEAR</button>
+  <button id="clearDrawBtn" class="hud-btn">CLEAR MY LINES</button>
 </div>
 
 <div id="map"></div>
@@ -115,7 +115,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import { 
-    getDatabase, ref, set, push, onValue, remove, onDisconnect 
+    getDatabase, ref, set, push, get, onValue, remove, onDisconnect 
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
   // 1. Firebase 設定
@@ -175,7 +175,7 @@
     }
   });
 
-  // 4. 地図連動 ＆ リアルタイム共有型作戦描画処理
+  // 4. 地図連動 ＆ 自分所有権つきリアルタイム描画処理
   const toggleDrawBtn = document.getElementById('toggleDrawBtn');
   const clearDrawBtn = document.getElementById('clearDrawBtn');
   const drawnLinesRef = ref(db, `teams/${teamId}/drawings`);
@@ -203,8 +203,18 @@
     }
   });
 
-  clearDrawBtn.addEventListener('click', () => {
-    remove(drawnLinesRef);
+  // 自分描画分のみクリアする処理
+  clearDrawBtn.addEventListener('click', async () => {
+    const snapshot = await get(drawnLinesRef);
+    if (snapshot.exists()) {
+      const drawings = snapshot.val();
+      Object.keys(drawings).forEach((lineId) => {
+        if (drawings[lineId].authorId === userId) {
+          const singleLineRef = ref(db, `teams/${teamId}/drawings/${lineId}`);
+          remove(singleLineRef);
+        }
+      });
+    }
   });
 
   const mapContainer = map.getContainer();
@@ -241,6 +251,7 @@
     if (currentPoints.length > 1) {
       const newLineRef = push(drawnLinesRef);
       set(newLineRef, {
+        authorId: userId, // 描画者のIDを保持
         points: currentPoints,
         createdAt: Date.now()
       });
@@ -281,7 +292,7 @@
       if (!mapLines[lineId]) {
         const lineData = drawings[lineId];
         const polyline = L.polyline(lineData.points, {
-          color: '#ff0055',
+          color: lineData.authorId === userId ? '#ff0055' : '#ffaa00', // 自分の線は赤、味方の線はオレンジで区別
           weight: 4,
           opacity: 0.9
         }).addTo(map);
