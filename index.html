@@ -24,7 +24,7 @@
       background-color: #050b14;
     }
 
-    /* 起動時 バイブレーション確認＆エントリー用オーバーレイ */
+    /* 起動時 サウンド・バイブ確認＆エントリー用オーバーレイ */
     .init-modal-overlay {
       position: fixed;
       top: 0; left: 0; width: 100vw; height: 100vh;
@@ -143,7 +143,7 @@
       transition: all 0.2s ease;
     }
 
-    /* Leaflet Tooltip & Popup カスタマイズ */
+    /* Leaflet Tooltip カスタマイズ */
     .leaflet-tooltip-custom {
       background: rgba(5, 11, 20, 0.9) !important;
       border: 1px solid #00ffcc !important;
@@ -162,15 +162,15 @@
 </head>
 <body>
 
-<!-- 初期接続・バイブレーションテスト画面 -->
+<!-- 初期接続・サウンド＆バイブレーションテスト画面 -->
 <div class="init-modal-overlay" id="initModal">
   <div class="init-card">
     <div class="init-title">TACTICAL SYSTEM INIT</div>
     <div class="init-desc">
       作戦開始前の端末チェックを行います。<br>
-      バイブレーションテストを実施して動作を確認してください。
+      テストボタンを押して通知音とバイブレーションを確認してください。
     </div>
-    <button class="init-btn" id="testVibeBtn">TEST VIBRATION ⚡</button>
+    <button class="init-btn" id="testAudioBtn">TEST AUDIO & VIBE 🔊</button>
     <button class="init-btn init-btn-primary" id="joinOpBtn" disabled>JOIN OPERATION (START GPS)</button>
   </div>
 </div>
@@ -180,7 +180,6 @@
   <div class="hud-timer" id="uavTimer">NEXT SCAN: PAUSED</div>
   <div class="hud-status" id="statusText">AWAITING OPERATION START</div>
   
-  <!-- コンパクト部隊切り替え & タイマーコントロールUI -->
   <div class="squad-selector">
     <button class="squad-btn" id="squadToggleBtn" style="border-color: #ff0055; color: #ff0055;">SQUAD: ALPHA ↺</button>
     <button class="squad-btn" id="addSquadBtn" style="border-color: #888; color: #fff;">+</button>
@@ -222,27 +221,70 @@
   const db = getDatabase(app);
 
   const operationId = "operation_alpha";
-  let isVibrationTested = false;
+  let isAudioTested = false;
   let isOpJoined = false;
+
+  // Web Audio APIコンテキスト（音声動的生成）
+  let audioCtx = null;
+
+  function initAudioContext() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  }
+
+  // 電子効果音の再生関数
+  function playBeep(freq = 880, duration = 0.1, count = 1, interval = 100) {
+    if (!audioCtx) return;
+    initAudioContext();
+
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => {
+        try {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+
+          gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+
+          osc.start();
+          osc.stop(audioCtx.currentTime + duration);
+        } catch (e) {
+          console.warn("Audio playback error:", e);
+        }
+      }, i * interval);
+    }
+  }
 
   // 1. 初期テスト＆参戦処理
   const initModal = document.getElementById('initModal');
-  const testVibeBtn = document.getElementById('testVibeBtn');
+  const testAudioBtn = document.getElementById('testAudioBtn');
   const joinOpBtn = document.getElementById('joinOpBtn');
 
-  testVibeBtn.addEventListener('click', () => {
+  testAudioBtn.addEventListener('click', () => {
+    initAudioContext();
+    playBeep(1200, 0.08, 2, 90); // スキャン音風テスト
+
     if ("vibrate" in navigator) {
-      navigator.vibrate([150, 100, 150]);
-    } else {
-      alert("この端末/ブラウザはバイブレーション機能をサポートしていません。");
+      try { navigator.vibrate([150, 100, 150]); } catch (e) {}
     }
-    isVibrationTested = true;
+
+    isAudioTested = true;
     joinOpBtn.disabled = false;
-    testVibeBtn.innerText = "TEST OK (RE-TEST) ⚡";
+    testAudioBtn.innerText = "TEST OK (RE-TEST) 🔊";
   });
 
   joinOpBtn.addEventListener('click', () => {
-    if (!isVibrationTested) return;
+    if (!isAudioTested) return;
     isOpJoined = true;
     initModal.style.display = 'none';
     initGPS();
@@ -267,7 +309,7 @@
     }
   });
 
-  // 3. 部隊管理（動的追加対応 & カラーテーブル）
+  // 3. 部隊管理
   let squadList = ["ALPHA", "BRAVO", "CHARLIE"];
   const PRESET_COLORS = ["#ff0055", "#00e5ff", "#76ff03", "#ff9100", "#d500f9", "#ffff00", "#00e676"];
   const SQUAD_COLORS = {
@@ -297,7 +339,7 @@
   let currentLng = null;
   let isMapInitialized = false;
 
-  // 4. 部隊トグル & HQモード切り替え制御
+  // 4. 部隊トグル & HQモード制御
   const squadToggleBtn = document.getElementById('squadToggleBtn');
   const addSquadBtn = document.getElementById('addSquadBtn');
   const hqBtn = document.getElementById('hqBtn');
@@ -359,7 +401,7 @@
     executeUAVScan();
   });
 
-  // 5. 地図連動 ＆ 部隊別リアルタイム描画処理
+  // 5. 地図描画処理
   const toggleDrawBtn = document.getElementById('toggleDrawBtn');
   const clearDrawBtn = document.getElementById('clearDrawBtn');
 
@@ -470,7 +512,7 @@
   mapContainer.addEventListener('mousemove', drawLine);
   mapContainer.addEventListener('mouseup', stopLine);
 
-  // 6. Firebaseからのリアルタイム作戦線データ同期
+  // 6. 線描画のリアルタイム同期
   let drawingsUnsubscribe = null;
 
   function syncDrawings() {
@@ -517,16 +559,15 @@
 
   syncDrawings();
 
-  // 7. リーダー統括タイマー ＆ スキャン制御
+  // 7. タイマー・音通知・スキャン制御
   const SCAN_INTERVAL_SEC = 60;
   let opStartTime = null;
   let lastScannedCycle = -1;
-  let lastVibratedSec = -1;
+  let lastNotifiedSec = -1;
 
   const startTimerBtn = document.getElementById('startTimerBtn');
   const timerRef = ref(db, `ops/${operationId}/timer`);
 
-  // 作戦タイマー共有同期を監視
   onValue(timerRef, (snapshot) => {
     const data = snapshot.val();
     if (data && data.startTime) {
@@ -545,7 +586,6 @@
     }
   });
 
-  // リーダーによるタイマー起動/リセット
   startTimerBtn.addEventListener('click', () => {
     if (opStartTime) {
       if (confirm("全プレイヤーの作戦タイマーをリセットしますか？")) {
@@ -571,6 +611,10 @@
         scannedAt: Date.now()
       });
 
+      // UAVスキャン完了音（高めのピピッ音）
+      playBeep(1500, 0.08, 2, 80);
+
+      // バイブ機能（可能であれば）
       if ("vibrate" in navigator) {
         try { navigator.vibrate([120, 80, 120]); } catch (e) {}
       }
@@ -585,7 +629,7 @@
     }
   }
 
-  // タイマーループ (共有開始時刻からの経過時間で計算)
+  // タイマーループ
   setInterval(() => {
     if (!opStartTime) return;
 
@@ -596,15 +640,16 @@
     const secondsInCycle = elapsedSec % SCAN_INTERVAL_SEC;
     const remainingSec = SCAN_INTERVAL_SEC - secondsInCycle;
 
-    // 10秒前の事前バイブ通知
-    if (remainingSec === 10 && lastVibratedSec !== elapsedSec) {
+    // スキャン10秒前の予告通知（音＆バイブ）
+    if (remainingSec === 10 && lastNotifiedSec !== elapsedSec) {
+      playBeep(600, 0.12, 2, 120); // 警告サウンド
       if ("vibrate" in navigator) {
         try { navigator.vibrate([200]); } catch (e) {}
       }
-      lastVibratedSec = elapsedSec;
+      lastNotifiedSec = elapsedSec;
     }
 
-    // 新しいスキャン周期（0秒到達）での処理
+    // 0秒到達時のスキャン実行
     if (currentCycle > lastScannedCycle) {
       executeUAVScan();
       lastScannedCycle = currentCycle;
