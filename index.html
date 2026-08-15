@@ -49,16 +49,17 @@
     /* 部隊（スクワッド）選択UI & 名前変更 */
     .squad-selector {
       margin-top: 8px;
-      display: flex; gap: 4px; flex-wrap: wrap;
+      display: flex; gap: 6px; align-items: center;
     }
     .squad-btn {
       background: rgba(5, 11, 20, 0.8);
       border: 1px solid #00ffcc;
       color: #00ffcc;
-      font-size: 10px; font-weight: bold;
-      padding: 4px 6px;
-      border-radius: 2px;
+      font-size: 11px; font-weight: bold;
+      padding: 5px 8px;
+      border-radius: 3px;
       cursor: pointer;
+      transition: all 0.2s ease;
     }
     .squad-btn.active {
       background: #00ffcc;
@@ -95,7 +96,7 @@
       color: #050b14;
     }
 
-    /* マーカーデザイン（望遠時に被らないように小ぶりに設計） */
+    /* マーカーデザイン */
     .player-marker-me {
       width: 10px; height: 10px;
       background-color: #00ffcc; border: 1.5px solid #ffffff;
@@ -109,7 +110,7 @@
       transition: all 0.2s ease;
     }
 
-    /* Leaflet Tooltip & Popup カスタマイズ (軍用UI風) */
+    /* Leaflet Tooltip & Popup カスタマイズ */
     .leaflet-tooltip-custom {
       background: rgba(5, 11, 20, 0.9) !important;
       border: 1px solid #00ffcc !important;
@@ -133,12 +134,11 @@
   <div class="hud-timer" id="uavTimer">NEXT SCAN: 60S</div>
   <div class="hud-status" id="statusText">ACQUIRING GPS...</div>
   
-  <!-- 部隊切り替え & 名前設定ボタン -->
+  <!-- コンパクト部隊切り替えUI -->
   <div class="squad-selector">
-    <button class="squad-btn active" data-squad="alpha">ALPHA</button>
-    <button class="squad-btn" data-squad="bravo">BRAVO</button>
-    <button class="squad-btn" data-squad="charlie">CHARLIE</button>
-    <button class="squad-btn" data-squad="all" style="border-color: #ffaa00; color: #ffaa00;">ALL (HQ)</button>
+    <button class="squad-btn" id="squadToggleBtn" style="border-color: #ff0055; color: #ff0055;">SQUAD: ALPHA ↺</button>
+    <button class="squad-btn" id="addSquadBtn" style="border-color: #888; color: #fff;">+</button>
+    <button class="squad-btn" id="hqBtn" style="border-color: #ffaa00; color: #ffaa00;">ALL (HQ)</button>
     <button class="squad-btn" id="setNameBtn" style="border-color: #ffffff; color: #ffffff;">NAME</button>
   </div>
 </div>
@@ -147,7 +147,7 @@
   <button id="fullScreenBtn" class="hud-btn">FULLSCREEN</button>
 </div>
 
-<div class="draw-controls">
+<div class="draw-controls" id="drawControls">
   <button id="toggleDrawBtn" class="hud-btn">DRAW: OFF</button>
   <button id="clearDrawBtn" class="hud-btn">CLEAR SQUAD LINES</button>
 </div>
@@ -178,7 +178,7 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  // 1. ユーザー名設定（ローカルストレージ保持）
+  // 1. ユーザー名設定
   let savedName = localStorage.getItem("bft_callsign");
   if (!savedName) {
     savedName = "OPERATOR_" + Math.floor(100 + Math.random() * 900);
@@ -198,15 +198,21 @@
   });
 
   const operationId = "operation_alpha"; 
-  let currentSquad = "alpha";
 
+  // 2. 部隊管理（動的追加対応 & カラーテーブル）
+  let squadList = ["ALPHA", "BRAVO", "CHARLIE"];
+  const PRESET_COLORS = ["#ff0055", "#00e5ff", "#76ff03", "#ff9100", "#d500f9", "#ffff00", "#00e676"];
   const SQUAD_COLORS = {
-    alpha: "#ff0055",
-    bravo: "#00e5ff",
-    charlie: "#76ff03"
+    "ALPHA": "#ff0055",
+    "BRAVO": "#00e5ff",
+    "CHARLIE": "#76ff03"
   };
 
-  // 2. 地図の初期化
+  let currentSquadIndex = 0;
+  let currentSquad = squadList[currentSquadIndex];
+  let isHQMode = false;
+
+  // 地図の初期化
   const map = L.map('map', {
     zoomControl: false,
     attributionControl: false,
@@ -245,27 +251,68 @@
     }
   });
 
-  // 4. 部隊（スクワッド）切り替え処理
-  const squadBtns = document.querySelectorAll('.squad-btn:not(#setNameBtn)');
+  // 4. 部隊トグル & HQモード切り替え制御
+  const squadToggleBtn = document.getElementById('squadToggleBtn');
+  const addSquadBtn = document.getElementById('addSquadBtn');
+  const hqBtn = document.getElementById('hqBtn');
   const hudTitle = document.getElementById('hudTitle');
+  const drawControls = document.getElementById('drawControls');
 
-  squadBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      squadBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentSquad = btn.dataset.squad;
+  function updateSquadUI() {
+    if (isHQMode) {
+      hudTitle.innerText = `UAV RECON // COMMAND (ALL HQ)`;
+      drawControls.style.display = 'none';
+      hqBtn.classList.add('active');
+      squadToggleBtn.style.opacity = '0.6';
+      if (isDrawingMode) disableDrawingMode();
+    } else {
+      currentSquad = squadList[currentSquadIndex];
+      const color = SQUAD_COLORS[currentSquad] || '#00ffcc';
 
-      if (currentSquad === 'all') {
-        hudTitle.innerText = `UAV RECON // COMMAND (ALL)`;
-        toggleDrawBtn.style.display = 'none';
-        if (isDrawingMode) disableDrawingMode();
+      hudTitle.innerText = `UAV RECON // SQUAD-${currentSquad}`;
+      squadToggleBtn.innerText = `SQUAD: ${currentSquad} ↺`;
+      squadToggleBtn.style.borderColor = color;
+      squadToggleBtn.style.color = color;
+      squadToggleBtn.style.opacity = '1.0';
+
+      drawControls.style.display = 'flex';
+      hqBtn.classList.remove('active');
+    }
+    syncDrawings();
+  }
+
+  // 次の部隊へトグル切り替え
+  squadToggleBtn.addEventListener('click', () => {
+    isHQMode = false;
+    currentSquadIndex = (currentSquadIndex + 1) % squadList.length;
+    updateSquadUI();
+    executeUAVScan();
+  });
+
+  // 部隊の新規追加
+  addSquadBtn.addEventListener('click', () => {
+    const newSquad = prompt("新しい部隊名を入力してください (例: DELTA):");
+    if (newSquad && newSquad.trim() !== "") {
+      const formattedSquad = newSquad.trim().toUpperCase();
+      if (!squadList.includes(formattedSquad)) {
+        squadList.push(formattedSquad);
+        const color = PRESET_COLORS[(squadList.length - 1) % PRESET_COLORS.length];
+        SQUAD_COLORS[formattedSquad] = color;
+        
+        currentSquadIndex = squadList.length - 1;
+        isHQMode = false;
+        updateSquadUI();
+        executeUAVScan();
       } else {
-        hudTitle.innerText = `UAV RECON // SQUAD-${currentSquad.toUpperCase()}`;
-        toggleDrawBtn.style.display = 'block';
+        alert("その部隊名は既に存在します。");
       }
+    }
+  });
 
-      syncDrawings();
-    });
+  // HQモード（指揮官モード）の独立切り替え
+  hqBtn.addEventListener('click', () => {
+    isHQMode = true;
+    updateSquadUI();
   });
 
   // 5. 地図連動 ＆ 部隊別リアルタイム描画処理
@@ -288,7 +335,7 @@
   }
 
   toggleDrawBtn.addEventListener('click', () => {
-    if (currentSquad === 'all') return;
+    if (isHQMode) return;
 
     isDrawingMode = !isDrawingMode;
     if (isDrawingMode) {
@@ -303,26 +350,24 @@
   });
 
   clearDrawBtn.addEventListener('click', async () => {
-    if (currentSquad === 'all') {
-      remove(ref(db, `ops/${operationId}/drawings`));
-    } else {
-      const drawnLinesRef = ref(db, `ops/${operationId}/drawings`);
-      const snapshot = await get(drawnLinesRef);
-      if (snapshot.exists()) {
-        const drawings = snapshot.val();
-        Object.keys(drawings).forEach((lineId) => {
-          if (drawings[lineId].squad === currentSquad) {
-            remove(ref(db, `ops/${operationId}/drawings/${lineId}`));
-          }
-        });
-      }
+    if (isHQMode) return;
+
+    const drawnLinesRef = ref(db, `ops/${operationId}/drawings`);
+    const snapshot = await get(drawnLinesRef);
+    if (snapshot.exists()) {
+      const drawings = snapshot.val();
+      Object.keys(drawings).forEach((lineId) => {
+        if (drawings[lineId].squad === currentSquad) {
+          remove(ref(db, `ops/${operationId}/drawings/${lineId}`));
+        }
+      });
     }
   });
 
   const mapContainer = map.getContainer();
 
   function startLine(e) {
-    if (!isDrawingMode || currentSquad === 'all') return;
+    if (!isDrawingMode || isHQMode) return;
     isPenDown = true;
     
     const containerPoint = getContainerPoint(e);
@@ -337,7 +382,7 @@
   }
 
   function drawLine(e) {
-    if (!isPenDown || !isDrawingMode) return;
+    if (!isPenDown || !isDrawingMode || isHQMode) return;
     if (e.cancelable) e.preventDefault();
 
     const containerPoint = getContainerPoint(e);
@@ -347,7 +392,7 @@
   }
 
   function stopLine() {
-    if (!isPenDown || !isDrawingMode) return;
+    if (!isPenDown || !isDrawingMode || isHQMode) return;
     isPenDown = false;
 
     if (currentPoints.length > 1) {
@@ -404,7 +449,7 @@
 
       Object.keys(drawings).forEach((lineId) => {
         const lineData = drawings[lineId];
-        const shouldShow = (currentSquad === 'all') || (lineData.squad === currentSquad);
+        const shouldShow = isHQMode || (lineData.squad === currentSquad);
 
         if (shouldShow) {
           if (!mapLines[lineId]) {
@@ -439,7 +484,7 @@
 
       set(userRef, {
         u: userId,
-        squad: currentSquad === 'all' ? 'hq' : currentSquad,
+        squad: isHQMode ? 'hq' : currentSquad,
         lat: currentLat,
         lng: currentLng,
         scannedAt: Date.now()
@@ -505,7 +550,7 @@
     alert("GPS非対応の端末です。");
   }
 
-  // 9. 味方位置同期 & タップ（クリック）でポップアップ表示
+  // 9. 味方位置同期
   const teamPlayersRef = ref(db, `ops/${operationId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
     const players = snapshot.val() || {};
@@ -533,7 +578,6 @@
           iconAnchor: isMe ? [5, 5] : [4, 4]
         });
 
-        // permanent: false にしてピンを触った（タップ/ホバー）時だけ表示
         const marker = L.marker([p.lat, p.lng], { icon: customIcon })
           .bindTooltip(labelText, { 
             permanent: false, 
