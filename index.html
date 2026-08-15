@@ -279,7 +279,7 @@
 
   // HQモード（指揮官モード）のトグル切り替え
   hqBtn.addEventListener('click', () => {
-    isHQMode = !isHQMode; // 押し直すと元の部隊モードにトグルバック
+    isHQMode = !isHQMode;
     updateSquadUI();
     executeUAVScan();
   });
@@ -442,7 +442,7 @@
 
   syncDrawings();
 
-  // 6. UAVスキャン処理
+  // 6. UAVスキャン処理（10秒前通知機能付き）
   const SCAN_INTERVAL_SEC = 60;
   let countdown = SCAN_INTERVAL_SEC;
 
@@ -459,6 +459,7 @@
         scannedAt: Date.now()
       });
 
+      // スキャン完了時の振動 (短・休・短)
       if ("vibrate" in navigator) {
         navigator.vibrate([120, 80, 120]);
       }
@@ -475,6 +476,14 @@
 
   setInterval(() => {
     countdown--;
+
+    // 10秒前事前予告バイブレーション
+    if (countdown === 10) {
+      if ("vibrate" in navigator) {
+        navigator.vibrate([200]);
+      }
+    }
+
     if (countdown <= 0) {
       executeUAVScan();
       countdown = SCAN_INTERVAL_SEC;
