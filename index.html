@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   
   <style>
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; touch-action: none; }
     body, html {
       margin: 0; padding: 0; width: 100%; height: 100%;
       overflow: hidden; background-color: #050b14;
@@ -21,6 +21,18 @@
       background-color: #050b14;
     }
     
+    /* 作戦描画用キャンバス */
+    #drawCanvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      z-index: 500;
+      pointer-events: none; /* デフォルトは操作透過 */
+    }
+    #drawCanvas.active {
+      pointer-events: auto; /* 描画モード時のみタッチイベントを取得 */
+    }
+
     /* 軍用HUD風ディスプレイ */
     .hud-overlay {
       position: absolute;
@@ -30,7 +42,7 @@
       border-radius: 4px;
       padding: 10px 14px;
       box-shadow: 0 0 12px rgba(0, 255, 204, 0.25);
-      pointer-events: none;
+      pointer-events: auto;
     }
     .hud-title {
       font-size: 10px; font-weight: bold; letter-spacing: 1px;
@@ -41,6 +53,28 @@
     }
     .hud-status {
       font-size: 11px; color: #00ffcc; margin-top: 4px;
+    }
+
+    /* 作戦描画用コントロールUI */
+    .draw-controls {
+      position: absolute;
+      bottom: 20px; right: 12px; z-index: 1000;
+      display: flex; gap: 8px;
+      pointer-events: auto;
+    }
+    .hud-btn {
+      background: rgba(5, 11, 20, 0.9);
+      border: 1px solid #00ffcc;
+      color: #00ffcc;
+      padding: 10px 14px;
+      font-family: inherit;
+      font-size: 12px; font-weight: bold;
+      border-radius: 4px;
+      box-shadow: 0 0 8px rgba(0, 255, 204, 0.2);
+    }
+    .hud-btn.active {
+      background: #00ffcc;
+      color: #050b14;
     }
 
     /* マーカーデザイン（発光ドット） */
@@ -64,6 +98,12 @@
   <div class="hud-status" id="statusText">ACQUIRING GPS...</div>
 </div>
 
+<div class="draw-controls">
+  <button id="toggleDrawBtn" class="hud-btn">DRAW: OFF</button>
+  <button id="clearDrawBtn" class="hud-btn">CLEAR</button>
+</div>
+
+<canvas id="drawCanvas"></canvas>
 <div id="map"></div>
 
 <!-- Leaflet JS -->
@@ -97,7 +137,7 @@
   const teamId = "alpha_squad";
 
   // ==========================================
-  // 2. 地図の初期化（拡大制限をレベル21まで解放）
+  // 2. 地図の初期化（最大ズームレベル21）
   // ==========================================
   const map = L.map('map', {
     zoomControl: false,
@@ -116,7 +156,81 @@
   let isMapInitialized = false;
 
   // ==========================================
-  // 3. UAVスキャン処理（1分間隔 ＆ バイブ通知）
+  // 3. 作戦描画キャンバス（手書き機能）
+  // ==========================================
+  const canvas = document.getElementById('drawCanvas');
+  const ctx = canvas.getContext('2d');
+  const toggleDrawBtn = document.getElementById('toggleDrawBtn');
+  const clearDrawBtn = document.getElementById('clearDrawBtn');
+  let isDrawingMode = false;
+  let isPenDown = false;
+
+  function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  toggleDrawBtn.addEventListener('click', () => {
+    isDrawingMode = !isDrawingMode;
+    if (isDrawingMode) {
+      canvas.classList.add('active');
+      toggleDrawBtn.classList.add('active');
+      toggleDrawBtn.innerText = "DRAW: ON";
+      map.dragging.disable();
+    } else {
+      canvas.classList.remove('active');
+      toggleDrawBtn.classList.remove('active');
+      toggleDrawBtn.innerText = "DRAW: OFF";
+      map.dragging.enable();
+    }
+  });
+
+  clearDrawBtn.addEventListener('click', () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  });
+
+  function getTouchPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches ? e.touches[0] : e;
+    return {
+      x: touch.clientX - rect.left,
+      y: touch.clientY - rect.top
+    };
+  }
+
+  function startDrawing(e) {
+    if (!isDrawingMode) return;
+    isPenDown = true;
+    const pos = getTouchPos(e);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    ctx.strokeStyle = '#ff0055'; // 軍用タクティカルレッド
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+  }
+
+  function draw(e) {
+    if (!isPenDown || !isDrawingMode) return;
+    const pos = getTouchPos(e);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+  }
+
+  function stopDrawing() {
+    isPenDown = false;
+  }
+
+  canvas.addEventListener('touchstart', startDrawing);
+  canvas.addEventListener('touchmove', draw);
+  canvas.addEventListener('touchend', stopDrawing);
+  canvas.addEventListener('mousedown', startDrawing);
+  canvas.addEventListener('mousemove', draw);
+  canvas.addEventListener('mouseup', stopDrawing);
+
+  // ==========================================
+  // 4. UAVスキャン処理（1分間隔 ＆ バイブ通知）
   // ==========================================
   const SCAN_INTERVAL_SEC = 60;
   let countdown = SCAN_INTERVAL_SEC;
@@ -133,7 +247,6 @@
         scannedAt: Date.now()
       });
 
-      // バイブレーション通知（ブッ、ブッ）
       if ("vibrate" in navigator) {
         navigator.vibrate([120, 80, 120]);
       }
@@ -158,7 +271,7 @@
   }, 1000);
 
   // ==========================================
-  // 4. 初回現在地でマップ起動 ＆ GPS保持
+  // 5. 初回現在地でマップ起動 ＆ GPS保持
   // ==========================================
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
@@ -197,7 +310,7 @@
   }
 
   // ==========================================
-  // 5. 味方位置の受信・同期
+  // 6. 味方位置の受信・同期
   // ==========================================
   const teamPlayersRef = ref(db, `teams/${teamId}/players`);
   onValue(teamPlayersRef, (snapshot) => {
