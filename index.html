@@ -63,7 +63,7 @@
       cursor: not-allowed;
     }
 
-    /* 軍用HUD風ディスプレイ */
+    /* 左上：メイン操作HUD */
     .hud-overlay {
       position: absolute;
       top: 12px; left: 12px; z-index: 1000;
@@ -79,10 +79,31 @@
       color: #88ffdd; text-transform: uppercase; margin-bottom: 4px;
     }
     .hud-timer {
-      font-size: 16px; font-weight: bold; color: #ffffff;
+      font-size: 15px; font-weight: bold; color: #ffffff;
     }
     .hud-status {
       font-size: 11px; color: #00ffcc; margin-top: 4px;
+    }
+
+    /* 右上：作戦全体のカウントダウンタイマー */
+    .op-timer-display {
+      position: absolute;
+      top: 12px; right: 12px; z-index: 1000;
+      background: rgba(5, 11, 20, 0.9);
+      border: 1px solid #00ffcc;
+      border-radius: 4px;
+      padding: 10px 14px;
+      box-shadow: 0 0 12px rgba(0, 255, 204, 0.3);
+      text-align: right;
+      pointer-events: auto;
+    }
+    .op-timer-title {
+      font-size: 9px; font-weight: bold; letter-spacing: 1px;
+      color: #88ffdd; text-transform: uppercase; margin-bottom: 2px;
+    }
+    .op-timer-value {
+      font-size: 18px; font-weight: bold; color: #ffaa00;
+      letter-spacing: 1px;
     }
 
     /* 部隊（スクワッド）選択UI & コントロール */
@@ -104,6 +125,11 @@
       background: #ffaa00;
       color: #050b14;
       border-color: #ffaa00;
+    }
+    .btn-danger {
+      border-color: #ff0055 !important;
+      color: #ff0055 !important;
+      background: rgba(255, 0, 85, 0.1) !important;
     }
 
     /* 右下：作戦描画用コントロールUI */
@@ -175,6 +201,7 @@
   </div>
 </div>
 
+<!-- 左上HUD -->
 <div class="hud-overlay">
   <div class="hud-title" id="hudTitle">UAV RECON // SQUAD-ALPHA</div>
   <div class="hud-timer" id="uavTimer">NEXT SCAN: PAUSED</div>
@@ -185,10 +212,18 @@
     <button class="squad-btn" id="addSquadBtn" style="border-color: #888; color: #fff;">+</button>
     <button class="squad-btn" id="hqBtn" style="border-color: #ffaa00; color: #ffaa00;">ALL (HQ)</button>
     <button class="squad-btn" id="setNameBtn" style="border-color: #ffffff; color: #ffffff;">NAME</button>
-    <button class="squad-btn" id="startTimerBtn" style="border-color: #00ffcc; color: #00ffcc; background: rgba(0,255,204,0.15);">START TAC-TIMER</button>
+    <button class="squad-btn" id="startTimerBtn" style="border-color: #00ffcc; color: #00ffcc; background: rgba(0,255,204,0.15);">START OPERATION</button>
+    <button class="squad-btn btn-danger" id="resetTimerBtn" style="display: none;">RESET</button>
   </div>
 </div>
 
+<!-- 右上：作戦全体のタイマー -->
+<div class="op-timer-display" id="opTimerDisplay">
+  <div class="op-timer-title">OP TIME REMAINING</div>
+  <div class="op-timer-value" id="opTimeRemaining">--:--</div>
+</div>
+
+<!-- 右下：描画コントロール -->
 <div class="draw-controls" id="drawControls">
   <button id="toggleDrawBtn" class="hud-btn">DRAW: OFF</button>
   <button id="clearDrawBtn" class="hud-btn">CLEAR SQUAD LINES</button>
@@ -272,7 +307,7 @@
 
   testAudioBtn.addEventListener('click', () => {
     initAudioContext();
-    playBeep(1200, 0.08, 2, 90); // スキャン音風テスト
+    playBeep(1200, 0.08, 2, 90);
 
     if ("vibrate" in navigator) {
       try { navigator.vibrate([150, 100, 150]); } catch (e) {}
@@ -559,42 +594,65 @@
 
   syncDrawings();
 
-  // 7. タイマー・音通知・スキャン制御
-  const SCAN_INTERVAL_SEC = 60;
+  // 7. 作戦タイマー & UAVスキャン管理
+  const SCAN_INTERVAL_SEC = 60; // 60秒周期でUAVスキャン
   let opStartTime = null;
+  let opDurationMin = 30;
   let lastScannedCycle = -1;
   let lastNotifiedSec = -1;
 
   const startTimerBtn = document.getElementById('startTimerBtn');
+  const resetTimerBtn = document.getElementById('resetTimerBtn');
+  const opTimeRemaining = document.getElementById('opTimeRemaining');
   const timerRef = ref(db, `ops/${operationId}/timer`);
 
+  // Firebaseからの作戦タイマー監視
   onValue(timerRef, (snapshot) => {
     const data = snapshot.val();
     if (data && data.startTime) {
       opStartTime = data.startTime;
+      opDurationMin = data.durationMin || 30;
       lastScannedCycle = -1;
-      startTimerBtn.innerText = "RESET TIMER";
-      startTimerBtn.style.borderColor = "#ffaa00";
-      startTimerBtn.style.color = "#ffaa00";
+      
+      startTimerBtn.style.display = "none";
+      resetTimerBtn.style.display = "inline-block";
     } else {
       opStartTime = null;
       document.getElementById("uavTimer").innerText = `NEXT SCAN: PAUSED`;
-      document.getElementById("statusText").innerText = "AWAITING TIMER START";
-      startTimerBtn.innerText = "START TAC-TIMER";
-      startTimerBtn.style.borderColor = "#00ffcc";
-      startTimerBtn.style.color = "#00ffcc";
+      document.getElementById("statusText").innerText = "AWAITING OPERATION START";
+      opTimeRemaining.innerText = "--:--";
+      opTimeRemaining.style.color = "#ffaa00";
+
+      startTimerBtn.style.display = "inline-block";
+      resetTimerBtn.style.display = "none";
     }
   });
 
+  // STARTボタンクリック（確認ダイアログ付き）
   startTimerBtn.addEventListener('click', () => {
-    if (opStartTime) {
-      if (confirm("全プレイヤーの作戦タイマーをリセットしますか？")) {
-        set(timerRef, null);
-      }
-    } else {
-      if (confirm("作戦タイマーを起動し、全員のカウントダウンを開始しますか？")) {
-        set(timerRef, { startTime: Date.now() });
-      }
+    const inputDuration = prompt("作戦時間（分）を入力してください:", "30");
+    if (inputDuration === null) return; // キャンセル時
+
+    const duration = parseInt(inputDuration, 10);
+    if (isNaN(duration) || duration <= 0) {
+      alert("有効な作戦時間（分数）を入力してください。");
+      return;
+    }
+
+    const confirmStart = confirm(`【確認】\n作戦時間を ${duration} 分間に設定してスタートしますか？\n全参加者のカウントダウンが同期開始されます。`);
+    if (confirmStart) {
+      set(timerRef, { 
+        startTime: Date.now(),
+        durationMin: duration
+      });
+    }
+  });
+
+  // RESETボタンクリック（確認ダイアログ付き）
+  resetTimerBtn.addEventListener('click', () => {
+    const confirmReset = confirm(`【警告】\n現在進行中の作戦タイマーを停止・リセットしますか？\n全プレイヤーの画面でタイマーが停止します。`);
+    if (confirmReset) {
+      set(timerRef, null);
     }
   });
 
@@ -614,7 +672,6 @@
       // UAVスキャン完了音（高めのピピッ音）
       playBeep(1500, 0.08, 2, 80);
 
-      // バイブ機能（可能であれば）
       if ("vibrate" in navigator) {
         try { navigator.vibrate([120, 80, 120]); } catch (e) {}
       }
@@ -629,20 +686,37 @@
     }
   }
 
-  // タイマーループ
+  // メインタイマーループ（200ms周期で監視）
   setInterval(() => {
     if (!opStartTime) return;
 
-    const elapsedSec = Math.floor((Date.now() - opStartTime) / 1000);
-    if (elapsedSec < 0) return;
+    const now = Date.now();
+    const elapsedSec = Math.floor((now - opStartTime) / 1000);
+    const totalOpSec = opDurationMin * 60;
+    const remainingOpSec = totalOpSec - elapsedSec;
 
+    // 1. 全体作戦タイマーの更新 (右上表示)
+    if (remainingOpSec <= 0) {
+      opTimeRemaining.innerText = "00:00";
+      opTimeRemaining.style.color = "#ff0055";
+      document.getElementById("uavTimer").innerText = `OP ENDED`;
+      document.getElementById("statusText").innerText = "OPERATION TIMEOUT";
+      return;
+    }
+
+    const opMin = Math.floor(remainingOpSec / 60);
+    const opSec = remainingOpSec % 60;
+    opTimeRemaining.innerText = `${String(opMin).padStart(2, '0')}:${String(opSec).padStart(2, '0')}`;
+    opTimeRemaining.style.color = remainingOpSec < 300 ? "#ff0055" : "#ffaa00"; // 残り5分以下で赤色
+
+    // 2. UAV定期スキャンタイマーの計算 (左上表示)
     const currentCycle = Math.floor(elapsedSec / SCAN_INTERVAL_SEC);
     const secondsInCycle = elapsedSec % SCAN_INTERVAL_SEC;
-    const remainingSec = SCAN_INTERVAL_SEC - secondsInCycle;
+    const remainingScanSec = SCAN_INTERVAL_SEC - secondsInCycle;
 
     // スキャン10秒前の予告通知（音＆バイブ）
-    if (remainingSec === 10 && lastNotifiedSec !== elapsedSec) {
-      playBeep(600, 0.12, 2, 120); // 警告サウンド
+    if (remainingScanSec === 10 && lastNotifiedSec !== elapsedSec) {
+      playBeep(600, 0.12, 2, 120);
       if ("vibrate" in navigator) {
         try { navigator.vibrate([200]); } catch (e) {}
       }
@@ -655,7 +729,7 @@
       lastScannedCycle = currentCycle;
     }
 
-    document.getElementById("uavTimer").innerText = `NEXT SCAN: ${remainingSec}S`;
+    document.getElementById("uavTimer").innerText = `NEXT SCAN: ${remainingScanSec}S`;
   }, 200);
 
   // 8. GPS位置取得
@@ -668,7 +742,7 @@
 
           map.setView([currentLat, currentLng], 20);
           isMapInitialized = true;
-          executeUAVScan();
+          if (opStartTime) executeUAVScan();
         },
         (err) => {
           console.warn("GPS取得失敗:", err);
@@ -686,7 +760,7 @@
           if (!isMapInitialized) {
             map.setView([currentLat, currentLng], 20);
             isMapInitialized = true;
-            executeUAVScan();
+            if (opStartTime) executeUAVScan();
           }
         },
         (err) => console.error("GPS Error:", err),
