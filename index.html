@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>BFT - UAV Tactical Tracker</title>
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
+  <style>
+    * { box-sizing: border-box; }
+    body, html {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden; background-color: #050b14;
+      font-family: 'Courier New', Courier, monospace;
+      color: #00ffcc;
+    }
+    #map {
+      height: 100vh; width: 100vw;
+      background-color: #050b14;
+    }
+    
+    /* 軍用HUD風ディスプレイ */
+    .hud-overlay {
+      position: absolute;
+      top: 12px; left: 12px; z-index: 1000;
+      background: rgba(5, 11, 20, 0.85);
+      border: 1px solid #00ffcc;
+      border-radius: 4px;
+      padding: 10px 14px;
+      box-shadow: 0 0 12px rgba(0, 255, 204, 0.25);
+      pointer-events: none;
+    }
+    .hud-title {
+      font-size: 10px; font-weight: bold; letter-spacing: 1px;
+      color: #88ffdd; text-transform: uppercase; margin-bottom: 4px;
+    }
+    .hud-timer {
+      font-size: 16px; font-weight: bold; color: #ffffff;
+    }
+    .hud-status {
+      font-size: 11px; color: #00ffcc; margin-top: 4px;
+    }
+
+    /* マーカーデザイン（発光ドット） */
+    .player-marker-me {
+      width: 14px; height: 14px;
+      background-color: #00ffcc; border: 2px solid #ffffff;
+      border-radius: 50%; box-shadow: 0 0 12px #00ffcc;
+    }
+    .player-marker-team {
+      width: 12px; height: 12px;
+      background-color: #0099ff; border: 2px solid #ffffff;
+      border-radius: 50%; box-shadow: 0 0 8px #0099ff;
+    }
+  </style>
+</head>
+<body>
+
+<div class="hud-overlay">
+  <div class="hud-title">UAV RECON // SQUAD-ALPHA</div>
+  <div class="hud-timer" id="uavTimer">NEXT SCAN: 60S</div>
+  <div class="hud-status" id="statusText">ACQUIRING GPS...</div>
+</div>
+
+<div id="map"></div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- Firebase SDK (v10 Modular CDN) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { 
+    getDatabase, ref, set, onValue, onDisconnect 
+  } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+  // ==========================================
+  // 1. Firebase 設定（発行された固有キーを適用済み）
+  // ==========================================
+  const firebaseConfig = {
+    apiKey: "AIzaSyBXskTRVUm4CL9rPQj110sw59M20OyJi28",
+    authDomain: "spac-gps.firebaseapp.com",
+    databaseURL: "https://spac-gps-default-rtdb.firebaseio.com",
+    projectId: "spac-gps",
+    storageBucket: "spac-gps.firebasestorage.app",
+    messagingSenderId: "184349883329",
+    appId: "1:184349883329:web:7e1d0bc6b40fa58e2dcd40",
+    measurementId: "G-SWCQYHGHYX"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  const userId = "OPERATOR_" + Math.floor(100 + Math.random() * 900);
+  const teamId = "alpha_squad";
+
+  // ==========================================
+  // 2. 地図の初期化
+  // ==========================================
+  const map = L.map('map', {
+    zoomControl: false,
+    attributionControl: false
+  });
+
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19
+  }).addTo(map);
+
+  const playerMarkers = {};
+  let currentLat = null;
+  let currentLng = null;
+  let isMapInitialized = false;
+
+  // ==========================================
+  // 3. UAVスキャン処理（1分間隔 ＆ バイブ通知）
+  // ==========================================
+  const SCAN_INTERVAL_SEC = 60;
+  let countdown = SCAN_INTERVAL_SEC;
+
+  function executeUAVScan() {
+    if (currentLat && currentLng) {
+      const userRef = ref(db, `teams/${teamId}/players/${userId}`);
+      onDisconnect(userRef).remove();
+
+      set(userRef, {
+        u: userId,
+        lat: currentLat,
+        lng: currentLng,
+        scannedAt: Date.now()
+      });
+
+      // バイブレーション通知（ブッ、ブッ）
+      if ("vibrate" in navigator) {
+        navigator.vibrate([120, 80, 120]);
+      }
+
+      const statusText = document.getElementById("statusText");
+      statusText.innerText = "UAV SCAN COMPLETE";
+      statusText.style.color = "#ffffff";
+      setTimeout(() => {
+        statusText.style.color = "#00ffcc";
+        statusText.innerText = "STANDBY FOR NEXT RECON";
+      }, 2500);
+    }
+  }
+
+  setInterval(() => {
+    countdown--;
+    if (countdown <= 0) {
+      executeUAVScan();
+      countdown = SCAN_INTERVAL_SEC;
+    }
+    document.getElementById("uavTimer").innerText = `NEXT SCAN: ${countdown}S`;
+  }, 1000);
+
+  // ==========================================
+  // 4. 初回現在地でマップ起動 ＆ GPS保持
+  // ==========================================
+  if ("geolocation" in navigator) {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        currentLat = position.coords.latitude;
+        currentLng = position.coords.longitude;
+
+        map.setView([currentLat, currentLng], 19);
+        isMapInitialized = true;
+        executeUAVScan();
+      },
+      (err) => {
+        console.warn("GPS取得失敗:", err);
+        map.setView([35.9868, 139.8515], 18);
+        isMapInitialized = true;
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+
+    navigator.geolocation.watchPosition(
+      (position) => {
+        currentLat = position.coords.latitude;
+        currentLng = position.coords.longitude;
+
+        if (!isMapInitialized) {
+          map.setView([currentLat, currentLng], 19);
+          isMapInitialized = true;
+          executeUAVScan();
+        }
+      },
+      (err) => console.error("GPS Error:", err),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
+    );
+  } else {
+    alert("GPS非対応の端末です。");
+  }
+
+  // ==========================================
+  // 5. 味方位置の受信・同期
+  // ==========================================
+  const teamPlayersRef = ref(db, `teams/${teamId}/players`);
+  onValue(teamPlayersRef, (snapshot) => {
+    const players = snapshot.val() || {};
+
+    Object.keys(playerMarkers).forEach((id) => {
+      if (!players[id]) {
+        map.removeLayer(playerMarkers[id]);
+        delete playerMarkers[id];
+      }
+    });
+
+    Object.values(players).forEach((p) => {
+      const isMe = p.u === userId;
+      const markerClass = isMe ? 'player-marker-me' : 'player-marker-team';
+
+      if (playerMarkers[p.u]) {
+        playerMarkers[p.u].setLatLng([p.lat, p.lng]);
+      } else {
+        const customIcon = L.divIcon({
+          className: markerClass,
+          iconSize: [14, 14],
+          iconAnchor: [7, 7]
+        });
+
+        const marker = L.marker([p.lat, p.lng], { icon: customIcon })
+          .bindTooltip(isMe ? 'YOU' : p.u, { permanent: true, direction: 'bottom', offset: [0, 8] })
+          .addTo(map);
+
+        playerMarkers[p.u] = marker;
+      }
+    });
+  });
+</script>
+
+</body>
+</html>
